@@ -17,6 +17,8 @@
  *   scritto a mano nel codice), per limitare l'abuso dell'endpoint pubblico.
  * - Supporta sia GET (usato dal tag client con sendPixel) sia POST
  *   (usato dal tag server-side con sendHttpRequest).
+ * - Neutralizza i valori che inizierebbero per = + - @ (rischio di
+ *   formula injection su Sheets, vedi sanitizeForSheet_ più sotto).
  *
  * CONFIGURAZIONE PER I TAG GTM — come vederla:
  * Apri il foglio Google normalmente: dopo aver salvato questo script
@@ -206,10 +208,12 @@ function handleRequest_(p) {
     });
     var incoming = declared.concat(extras);
 
-    // Intestazione attuale del foglio
+    // Intestazione attuale del foglio (trim difensivo: uno spazio in coda
+    // digitato per errore in un'intestazione farebbe fallire il confronto
+    // con i nomi di colonna dichiarati e ne creerebbe una duplicata)
     var lastCol = sheet.getLastColumn();
     var headers = lastCol > 0
-      ? sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(String)
+      ? sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(function (h) { return String(h).trim(); })
       : [];
 
     if (headers.length === 0 || headers.join('') === '') {
@@ -225,10 +229,12 @@ function handleRequest_(p) {
       }
     }
 
-    // Costruisce la riga allineata all'intestazione (non all'ordine di arrivo)
+    // Costruisce la riga allineata all'intestazione (non all'ordine di arrivo),
+    // neutralizzando i valori che appendRow tratterebbe come formula
+    // (vedi sanitizeForSheet_ più sotto).
     var row = headers.map(function (h) {
       if (h === 'timestamp') return new Date();
-      return p[h] !== undefined ? p[h] : '';
+      return sanitizeForSheet_(p[h] !== undefined ? p[h] : '');
     });
 
     sheet.appendRow(row);
@@ -238,6 +244,24 @@ function handleRequest_(p) {
   } finally {
     lock.releaseLock();
   }
+}
+
+// appendRow/setValues interpretano le stringhe esattamente come farebbe
+// l'interfaccia se digitate a mano: un valore che inizia per "=" diventa
+// una FORMULA eseguita quando qualcuno apre il foglio (es. per esfiltrare
+// dati con IMPORTXML o per phishing con HYPERLINK) — un rischio reale,
+// non teorico, perché arriva da un endpoint pubblico. Un apostrofo (')
+// iniziale forza il valore a testo letterale, esattamente come se
+// premessi ' prima di digitare in una cella: viene tolto dalla
+// visualizzazione, il contenuto resta quello originale.
+// Compromesso consapevole: prefissando anche "+", "-", "@" (blacklist
+// standard OWASP contro l'injection nei fogli di calcolo, non solo "="),
+// un valore numerico negativo legittimo (es. "-5") diventa testo invece
+// che numero. Se ti serve che i numeri negativi restino numerici, togli
+// "+-@" da questa regex e lascia solo "=".
+function sanitizeForSheet_(v) {
+  if (typeof v !== 'string') return v;
+  return /^[=+\-@]/.test(v) ? "'" + v : v;
 }
 
 function jsonOutput_(obj) {

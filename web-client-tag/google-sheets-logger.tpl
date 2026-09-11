@@ -384,7 +384,7 @@ function handleRequest_(p) {
 
     var lastCol = sheet.getLastColumn();
     var headers = lastCol > 0
-      ? sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(String)
+      ? sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(function (h) { return String(h).trim(); })
       : [];
 
     if (headers.length === 0 || headers.join('') === '') {
@@ -400,7 +400,7 @@ function handleRequest_(p) {
 
     var row = headers.map(function (h) {
       if (h === 'timestamp') return new Date();
-      return p[h] !== undefined ? p[h] : '';
+      return sanitizeForSheet_(p[h] !== undefined ? p[h] : '');
     });
 
     sheet.appendRow(row);
@@ -410,6 +410,19 @@ function handleRequest_(p) {
   } finally {
     lock.releaseLock();
   }
+}
+
+// appendRow/setValues interpretano le stringhe come farebbe l'interfaccia
+// se digitate a mano: un valore che inizia per "=" diventa una FORMULA
+// eseguita quando qualcuno apre il foglio (es. IMPORTXML per esfiltrare
+// dati, HYPERLINK per phishing) — rischio reale, l'endpoint è pubblico.
+// Un apostrofo (') iniziale forza il testo letterale, come premere ' prima
+// di digitare in cella. Compromesso: prefissando anche "+ - @" (blacklist
+// OWASP standard, non solo "="), un numero negativo legittimo come "-5"
+// diventa testo invece che numero; se ti serve il contrario, lascia solo "=".
+function sanitizeForSheet_(v) {
+  if (typeof v !== 'string') return v;
+  return /^[=+\-@]/.test(v) ? "'" + v : v;
 }
 
 function jsonOutput_(obj) {
