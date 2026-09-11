@@ -56,7 +56,7 @@ ___TEMPLATE_PARAMETERS___
     "name": "secretToken",
     "displayName": "Token condiviso",
     "simpleValueType": true,
-    "help": "Deve combaciare esattamente con la costante SHARED_SECRET impostata nell'Apps Script. L'endpoint /exec è pubblico: senza questo controllo chiunque legga il container GTM può scrivere nel foglio."
+    "help": "Non inventarlo a mano: apri il foglio Google, menu \"Sheets Logger (GTM)\" → \"Mostra token attuale\" (generato in automatico da Apps Script) e incollalo qui. L'endpoint /exec è pubblico: senza questo controllo chiunque legga il container GTM può scrivere nel foglio."
   },
   {
     "type": "SIMPLE_TABLE",
@@ -223,7 +223,44 @@ senza la gestione di permessi/versioning di un template).
    (è lo stesso file presente in `apps-script/Code.gs` nel repository):
 
 ```javascript
-var SHARED_SECRET = 'CAMBIA_QUESTO_TOKEN';
+function onOpen() {
+  SpreadsheetApp.getUi()
+    .createMenu('Sheets Logger (GTM)')
+    .addItem('Mostra token attuale', 'showSecret')
+    .addItem('Rigenera token', 'regenerateSecret')
+    .addToUi();
+}
+
+function getSecret_() {
+  var props = PropertiesService.getScriptProperties();
+  var secret = props.getProperty('SHARED_SECRET');
+  if (!secret) {
+    secret = Utilities.getUuid();
+    props.setProperty('SHARED_SECRET', secret);
+  }
+  return secret;
+}
+
+function showSecret() {
+  var ui = SpreadsheetApp.getUi();
+  ui.alert(
+    'Token condiviso attuale',
+    getSecret_() + '\n\nCopialo nel campo "Token condiviso" di entrambi i tag GTM (client e server).',
+    ui.ButtonSet.OK
+  );
+}
+
+function regenerateSecret() {
+  var ui = SpreadsheetApp.getUi();
+  var resp = ui.alert(
+    'Rigenerare il token?',
+    'I tag GTM configurati con il token attuale smetteranno di funzionare finché non aggiorni il campo "Token condiviso". Continuare?',
+    ui.ButtonSet.YES_NO
+  );
+  if (resp !== ui.Button.YES) return;
+  PropertiesService.getScriptProperties().setProperty('SHARED_SECRET', Utilities.getUuid());
+  showSecret();
+}
 
 function doGet(e) {
   return handleRequest_(e.parameter || {});
@@ -242,7 +279,7 @@ function doPost(e) {
 }
 
 function handleRequest_(p) {
-  if (SHARED_SECRET && p.token !== SHARED_SECRET) {
+  if (getSecret_() !== p.token) {
     return jsonOutput_({ ok: false, error: 'unauthorized' });
   }
 
@@ -301,19 +338,24 @@ function jsonOutput_(obj) {
 }
 ```
 
-4. Modifica `SHARED_SECRET` con un valore a tua scelta (dev'essere
-   identico al campo "Token condiviso" del tag GTM).
-5. Deploy → Nuovo deployment → tipo **App web**.
+4. Deploy → Nuovo deployment → tipo **App web**.
    - Esegui come: **Me**.
    - Chi ha accesso: **Chiunque** (obbligatorio: `sendPixel` non può
      inviare header di autenticazione, quindi il deployment deve essere
      pubblico; il token condiviso è l'unico controllo di accesso
      disponibile in questo scenario).
-6. Copia l'URL che termina in `/exec` e incollalo nel campo "Apps Script
+5. Copia l'URL che termina in `/exec` e incollalo nel campo "Apps Script
    Web App URL" del tag.
+6. Ricarica la pagina del foglio Google (serve perché `onOpen` giri e
+   crei il menu): comparirà **Sheets Logger (GTM)** nella barra dei menu.
+   Clicca **Mostra token attuale**: il token viene generato al primo
+   utilizzo (non c'è nulla da inventare o scrivere nel codice) e salvato
+   nelle Proprietà dello script, non nel testo del file. Copialo nel
+   campo "Token condiviso" del tag.
 7. **Ogni volta che modifichi il codice devi ri-deployare** (Deploy →
    Gestisci deployment → Modifica → Nuova versione), altrimenti gira la
-   versione precedente.
+   versione precedente. Il token invece sopravvive ai redeploy: vive nelle
+   Proprietà dello script, non nel codice.
 
 ## Perché lo script è "container-bound" e non prende uno Spreadsheet ID
 
@@ -325,35 +367,60 @@ al foglio (`SpreadsheetApp.getActiveSpreadsheet()` invece di
 `openById(...)`) questo problema sparisce alla radice: anche conoscendo
 l'URL `/exec` e il token, si può scrivere solo in questo foglio.
 
-## Sicurezza — cosa resta vero comunque
+## Il token: come viene generato e alternative
 
-- L'URL `/exec` è dentro il container GTM: è per definizione **pubblico**.
-  Il token condiviso alza l'asticella ma non è autenticazione vera (viaggia
-  in chiaro in query string).
-- Limiti giornalieri di esecuzione di Apps Script: su volumi alti li si
-  raggiunge.
-- Adblocker/estensioni privacy bloccano con una certa frequenza le chiamate
-  verso domini Google da script di terze parti nella pagina.
-- È una chiamata verso un servizio terzo con dati dell'utente: valuta il
-  Consent Mode / le impostazioni di consenso del tag (tab "Consenso" del
-  tag in GTM), non serve gestirlo nel codice del template.
+Il token **non va inventato a mano**: la prima volta che apri il foglio
+(o quando lo rigeneri dal menu "Sheets Logger (GTM)") Apps Script lo crea
+con `Utilities.getUuid()` e lo salva in `PropertiesService` — non nel
+testo del codice. Questo significa anche che condividere/pubblicare il
+file `Code.gs` (come in questo stesso repository) non espone mai il
+valore reale in uso.
+
+Resta comunque un **bearer token statico**: chi lo intercetta o lo legge
+può usarlo finché non lo rigeneri. Alternative valutate, nessuna delle
+quali elimina davvero il problema in un contesto client-side:
+
+- **Firma HMAC con timestamp** (hash del token + timestamp + payload,
+  verificato lato Apps Script con una finestra di validità breve): riduce
+  il rischio di replay di una richiesta intercettata, ma qui il codice è
+  eseguito nel browser di ogni visitatore, quindi la logica di firma
+  stessa è leggibile da chiunque ispezioni il container — non protegge il
+  segreto, solo la finestra temporale in cui una richiesta copiata resta
+  valida. Ha senso soprattutto sul tag **server-side**, dove il codice non
+  è mai esposto al browser: se ti serve, chiedi e la implemento lì.
+- **Allowlist per IP**: non disponibile — l'oggetto `e` di Apps Script non
+  espone l'IP del chiamante.
+- **Contenimento del danno**: lo script può solo *aggiungere righe* a
+  questo foglio (mai leggere, cancellare, o toccare altri file), quindi un
+  token trapelato porta al massimo a righe spam da ripulire, non a una
+  perdita di dati.
+
+Il limite di fondo resta strutturale: qualunque credenziale che debba
+viaggiare fino al browser per autorizzare una chiamata è, per definizione,
+leggibile da chi controlla quel browser. Se il dato non è "loggabile a
+perdere" (spam accettabile nel foglio), la risposta reale è non farlo dal
+client: usa il tag server-side di questo repository, dove token e URL
+restano nella configurazione del container e non lasciano mai il server.
 
 ## C'è un modo per non usare affatto Apps Script?
 
-Sì, con dei compromessi. Vedi `docs/no-apps-script-alternatives.md` nel
-repository per il dettaglio; in sintesi:
+Vedi `docs/no-apps-script-alternatives.md` nel repository per il dettaglio
+completo (in questo progetto entrambi i tag, client e server, usano lo
+stesso Apps Script per scelta — niente Google Cloud, niente Sheets API,
+niente service account). In sintesi le alternative valutate:
 
-- **Meglio in assoluto**: se hai già (o puoi attivare) un container
-  **server-side** GTM, usa il tag `google-sheets-writer.tpl` di questo
-  stesso repository. Scrive su Sheets tramite le API Google con
-  autenticazione via Application Default Credentials: zero Apps Script,
-  nessun endpoint pubblico, nessun limite di Apps Script.
+- **Tag server-side con Sheets API diretta** (non usata in questo
+  progetto su richiesta): autenticazione via Application Default
+  Credentials del container, zero Apps Script — ma richiede un progetto
+  Google Cloud e funziona solo se il container gira su App Engine/Cloud
+  Run.
 - **Trucco senza codice**: un Google Form ha un endpoint pubblico
   `.../formResponse` che accetta i valori delle domande via POST e crea
   una riga nel foglio "Risposte" collegato al Form — zero riga di Apps
   Script. Limiti: colonne fisse alle domande del Form, solo append, nessuna
-  vera autenticazione, comportamento non documentato/non garantito da
-  Google (può cambiare senza preavviso).
+  vera autenticazione (e qui il token generato da Apps Script sopra non è
+  nemmeno applicabile, perché non c'è codice tuo che gira), comportamento
+  non documentato/non garantito da Google.
 - **Servizi terzi** (Sheety, SheetDB, sheet.best, Make/Zapier con
   webhook→Sheet): zero codice lato tuo, ma i dati passano su
   un'infrastruttura terza e quasi sempre a pagamento oltre soglie minime.

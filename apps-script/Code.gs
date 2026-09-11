@@ -13,15 +13,60 @@
  *   di fare semplicemente appendRow(valori) nell'ordine di arrivo.
  * - Aggiunge in automatico le colonne nuove che non esistono ancora.
  * - LockService per evitare righe perse/sovrascritte con richieste simultanee.
- * - Un token condiviso per limitare l'abuso dell'endpoint pubblico.
+ * - Un token condiviso, GENERATO AUTOMATICAMENTE (non va inventato né
+ *   scritto a mano nel codice), per limitare l'abuso dell'endpoint pubblico.
  * - Supporta sia GET (usato dal tag client con sendPixel) sia POST
- *   (utile se in futuro passi a un Custom HTML tag con fetch()).
+ *   (usato dal tag server-side con sendHttpRequest).
+ *
+ * TOKEN — come vederlo/rigenerarlo:
+ * Apri il foglio Google normalmente: dopo aver salvato questo script
+ * comparirà un menu "Sheets Logger (GTM)" nella barra del foglio con le
+ * voci "Mostra token attuale" e "Rigenera token". Il token vive in
+ * PropertiesService (Proprietà dello script), non nel testo del codice:
+ * non finisce per errore in un file condiviso, in un export del
+ * container o in questo stesso repository.
  */
 
-// Imposta qui un token segreto a tua scelta. Deve combaciare con il campo
-// "Token condiviso" del tag GTM. Lascialo vuoto ('') per disattivare il
-// controllo (sconsigliato: l'endpoint resta comunque pubblico).
-var SHARED_SECRET = 'CAMBIA_QUESTO_TOKEN';
+function onOpen() {
+  SpreadsheetApp.getUi()
+    .createMenu('Sheets Logger (GTM)')
+    .addItem('Mostra token attuale', 'showSecret')
+    .addItem('Rigenera token', 'regenerateSecret')
+    .addToUi();
+}
+
+function getSecret_() {
+  var props = PropertiesService.getScriptProperties();
+  var secret = props.getProperty('SHARED_SECRET');
+  if (!secret) {
+    secret = Utilities.getUuid();
+    props.setProperty('SHARED_SECRET', secret);
+  }
+  return secret;
+}
+
+function showSecret() {
+  var ui = SpreadsheetApp.getUi();
+  ui.alert(
+    'Token condiviso attuale',
+    getSecret_() + '\n\nCopialo nel campo "Token condiviso" di entrambi i tag ' +
+      'GTM (client-side e server-side) che puntano a questo foglio.',
+    ui.ButtonSet.OK
+  );
+}
+
+function regenerateSecret() {
+  var ui = SpreadsheetApp.getUi();
+  var resp = ui.alert(
+    'Rigenerare il token?',
+    'I tag GTM configurati con il token attuale smetteranno di funzionare ' +
+      'finché non aggiorni il campo "Token condiviso" con il nuovo valore. Continuare?',
+    ui.ButtonSet.YES_NO
+  );
+  if (resp !== ui.Button.YES) return;
+  PropertiesService.getScriptProperties().setProperty('SHARED_SECRET', Utilities.getUuid());
+  showSecret();
+}
 
 function doGet(e) {
   return handleRequest_(e.parameter || {});
@@ -43,7 +88,7 @@ function doPost(e) {
 }
 
 function handleRequest_(p) {
-  if (SHARED_SECRET && p.token !== SHARED_SECRET) {
+  if (getSecret_() !== p.token) {
     return jsonOutput_({ ok: false, error: 'unauthorized' });
   }
 

@@ -56,7 +56,7 @@ ___TEMPLATE_PARAMETERS___
     "name": "secretToken",
     "displayName": "Token condiviso",
     "simpleValueType": true,
-    "help": "Deve combaciare con la costante SHARED_SECRET impostata nell'Apps Script. A differenza del tag client-side, qui il valore non transita mai verso il browser: resta nella configurazione del container server."
+    "help": "Non inventarlo a mano: apri il foglio Google, menu \"Sheets Logger (GTM)\" → \"Mostra token attuale\" (generato in automatico da Apps Script) e incollalo qui. A differenza del tag client-side, qui il valore non transita mai verso il browser: resta nella configurazione del container server."
   },
   {
     "type": "SIMPLE_TABLE",
@@ -263,11 +263,13 @@ come per il tag client-side — vedi `apps-script/Code.gs` nel repository
 
 1. Segui il setup Apps Script descritto in
    `web-client-tag/google-sheets-logger.tpl` (sezione Documentazione) o in
-   `apps-script/Code.gs`: stesso script, stesso deployment, stesso
-   `SHARED_SECRET`.
+   `apps-script/Code.gs`: stesso script, stesso deployment. Il token non
+   si scrive nel codice: apri il foglio, menu "Sheets Logger (GTM)" →
+   "Mostra token attuale" (generato al primo utilizzo).
 2. In GTM (container Server): importa questo file (Templates → New →
    menu ⋮ → Import), crea il tag, incolla lo stesso URL `/exec` e lo
-   stesso token condiviso usati per il tag client-side.
+   stesso token mostrato dal menu, già usato per il tag client-side (o un
+   deployment separato con il suo token, se preferisci tenerli distinti).
 3. Compila la tabella "Dati da scrivere" mappando variabili di event data
    (es. `{{Event Name}}`, `{{Client ID}}`, `{{Timestamp}}`) come valore di
    ogni colonna.
