@@ -23,6 +23,12 @@
  *   "<Foglio> - Archivio" (menu "Archiviazione righe vecchie"), a mano o
  *   con un trigger automatico mensile, per non far crescere all'infinito
  *   il tab principale.
+ * - Health-check: "?token=...&ping=1" risponde senza scrivere righe, utile
+ *   per verificare deployment e token da browser durante il setup.
+ * - "sheet", "token", "_order", "ping" sono nomi di colonna riservati: se
+ *   la tabella del tag ne usa uno, il template GTM lo scarta con un log
+ *   invece di lasciare un comportamento ambiguo o una perdita silenziosa
+ *   del dato (vedi i commenti nei template .tpl).
  *
  * CONFIGURAZIONE PER I TAG GTM — come vederla:
  * Apri il foglio Google normalmente: dopo aver salvato questo script
@@ -191,6 +197,14 @@ function handleRequest_(p) {
     return jsonOutput_({ ok: false, error: 'unauthorized' });
   }
 
+  // Health-check: verifica che deployment e token siano corretti senza
+  // scrivere né toccare il lock. Uso da browser: incolla l'URL /exec con
+  // "?token=IL_TUO_TOKEN&ping=1" in fondo — risponde {"ok":true,"ping":true}
+  // senza aggiungere righe al foglio.
+  if (p.ping) {
+    return jsonOutput_({ ok: true, ping: true });
+  }
+
   var lock = LockService.getScriptLock();
   try {
     lock.waitLock(30000);
@@ -207,7 +221,7 @@ function handleRequest_(p) {
     }
 
     // Parametri riservati, mai trattati come nomi di colonna
-    var reserved = { sheet: 1, token: 1, _order: 1 };
+    var reserved = { sheet: 1, token: 1, _order: 1, ping: 1 };
 
     // Ordine dichiarato dal tag (preserva l'ordine impostato nella tabella del tag)
     var declared = String(p._order || '').split('|').filter(function (c) { return c; });

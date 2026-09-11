@@ -76,7 +76,7 @@ ___TEMPLATE_PARAMETERS___
         "type": "TEXT"
       }
     ],
-    "help": "Ogni riga diventa una colonna nel foglio (creata in automatico se non esiste ancora, gestito dall'Apps Script). Qui puoi mappare direttamente variabili di event data, es. {{Event Name}}, {{Client ID}}."
+    "help": "Ogni riga diventa una colonna nel foglio (creata in automatico se non esiste ancora, gestito dall'Apps Script). Qui puoi mappare direttamente variabili di event data, es. {{Event Name}}, {{Client ID}}. Nomi riservati (non usarli come nome colonna, verrebbero scartati): sheet, token, _order, ping."
   },
   {
     "type": "CHECKBOX",
@@ -102,12 +102,23 @@ const token = data.secretToken || '';
 const rows = data.rowData || [];
 const debug = data.enableLogging;
 
+// Nomi riservati dal protocollo con Apps Script: una colonna chiamata
+// esattamente "sheet", "token", "_order" o "ping" verrebbe silenziosamente
+// sovrascritta più sotto dal valore di controllo con lo stesso nome
+// (payload.token = token, ecc.), perdendo il dato che intendevi scrivere.
+// Si scarta quindi la colonna con un log, invece di perderla in silenzio.
+const reserved = { sheet: 1, token: 1, _order: 1, ping: 1 };
+
 const payload = {};
 let order = '';
 
 for (let i = 0; i < rows.length; i++) {
   const name = makeString(rows[i].column1 || '');
   if (!name) continue;
+  if (reserved[name]) {
+    log('Google Sheets Writer - colonna "' + name + '" ignorata: nome riservato (sheet/token/_order/ping).');
+    continue;
+  }
 
   const raw = rows[i].column2;
   // NON usare "raw || ''" al posto di questo controllo: trasformerebbe

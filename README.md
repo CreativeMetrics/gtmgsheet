@@ -127,6 +127,22 @@ il dettaglio di come farlo resta documentato in
 insieme ad altre opzioni (trucco Google Form, servizi terzi come Sheety/
 SheetDB), per riferimento se dovesse servire.
 
+## Nomi di colonna riservati
+
+Nella tabella "Dati da scrivere" di entrambi i tag, non usare `sheet`,
+`token`, `_order` o `ping` come "Nome colonna": sono gli stessi nomi usati
+dal protocollo tra il tag e Apps Script per il nome del foglio, il token,
+l'ordine delle colonne e l'health-check. Se una colonna li usa, viene
+scartata con un avviso in console invece di scrivere un dato ambiguo o
+di rompere silenziosamente l'autenticazione.
+
+## Verificare il deployment senza scrivere righe di prova
+
+`Code.gs` risponde a `?token=IL_TUO_TOKEN&ping=1` (aggiunto in fondo
+all'URL `/exec`) con `{"ok":true,"ping":true}`, senza scrivere alcuna
+riga: utile per confermare da browser che deployment e token sono
+corretti durante il setup, senza sporcare il foglio con righe di test.
+
 ## Manutenzione — archiviazione righe vecchie
 
 `Code.gs` include un'archiviazione opzionale (menu **Sheets Logger (GTM)**

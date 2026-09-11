@@ -76,7 +76,7 @@ ___TEMPLATE_PARAMETERS___
         "type": "TEXT"
       }
     ],
-    "help": "Ogni riga diventa una colonna nel foglio. Se la colonna non esiste ancora viene creata in coda automaticamente."
+    "help": "Ogni riga diventa una colonna nel foglio. Se la colonna non esiste ancora viene creata in coda automaticamente. Nomi riservati (non usarli come nome colonna, verrebbero scartati): sheet, token, _order, ping."
   },
   {
     "type": "CHECKBOX",
@@ -101,12 +101,26 @@ const token = data.secretToken || '';
 const rows = data.rowData || [];
 const log = data.enableLogging;
 
+// Nomi riservati dal protocollo con Apps Script: se una colonna della
+// tabella si chiamasse esattamente "sheet", "token", "_order" o "ping",
+// finirebbe duplicata nella query string insieme al parametro di
+// controllo con lo stesso nome, con esito indefinito lato Apps Script
+// (quale delle due vince dipende dall'ordine con cui vengono lette,
+// nel peggiore dei casi rompendo l'autenticazione). Si scarta quindi la
+// colonna con un avviso in console, invece di lasciare il comportamento
+// ambiguo.
+const reserved = { sheet: 1, token: 1, _order: 1, ping: 1 };
+
 let order = '';
 let qs = '';
 
 for (let i = 0; i < rows.length; i++) {
   const name = makeString(rows[i].column1 || '');
   if (!name) continue;
+  if (reserved[name]) {
+    logToConsole('Google Sheets Logger - colonna "' + name + '" ignorata: nome riservato (sheet/token/_order/ping).');
+    continue;
+  }
 
   const raw = rows[i].column2;
   // Importante: NON usare "raw || 'N/A'" perché trasformerebbe anche
@@ -372,6 +386,14 @@ function handleRequest_(p) {
     return jsonOutput_({ ok: false, error: 'unauthorized' });
   }
 
+  // Health-check: verifica che deployment e token siano corretti senza
+  // scrivere né toccare il lock. Uso da browser: incolla l'URL /exec con
+  // "?token=IL_TUO_TOKEN&ping=1" in fondo — risponde {"ok":true,"ping":true}
+  // senza aggiungere righe al foglio.
+  if (p.ping) {
+    return jsonOutput_({ ok: true, ping: true });
+  }
+
   var lock = LockService.getScriptLock();
   try {
     lock.waitLock(30000);
@@ -388,7 +410,7 @@ function handleRequest_(p) {
     }
 
     // Parametri riservati, mai trattati come nomi di colonna
-    var reserved = { sheet: 1, token: 1, _order: 1 };
+    var reserved = { sheet: 1, token: 1, _order: 1, ping: 1 };
 
     // Ordine dichiarato dal tag (preserva l'ordine impostato nella tabella del tag)
     var declared = String(p._order || '').split('|').filter(function (c) { return c; });
@@ -601,7 +623,6 @@ function jsonOutput_(obj) {
     .createTextOutput(JSON.stringify(obj))
     .setMimeType(ContentService.MimeType.JSON);
 }
-```
 
 4. Deploy → Nuovo deployment → tipo **App web**.
    - Esegui come: **Me**.
