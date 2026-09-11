@@ -42,7 +42,7 @@ ___TEMPLATE_PARAMETERS___
         "args": ["^https://script\\.google\\.com/macros/s/.+/exec$"]
       }
     ],
-    "help": "URL che termina in /exec ottenuto da Apps Script → Deploy → Nuovo deployment → tipo “App web”. Dopo il Deploy apri il foglio Google, menu “Sheets Logger (GTM)” → “Imposta URL Web App” per salvarlo lì, poi “Mostra configurazione” per rileggerlo insieme a foglio e token. Vedi il tab Documentazione di questo template per il codice Apps Script da incollare nel foglio."
+    "help": "URL che termina in /exec ottenuto da Apps Script → Deploy → Nuovo deployment → tipo “App web”. Dopo il Deploy apri il foglio Google, menu “Sheets Logger (GTM)” → “Mostra configurazione”: l'URL è rilevato in automatico nella maggior parte dei casi; se manca o è sbagliato, usa “Imposta URL Web App” per incollarlo a mano. Vedi il tab Documentazione di questo template per il codice Apps Script da incollare nel foglio."
   },
   {
     "type": "TEXT",
@@ -242,19 +242,41 @@ function getSecret_() {
   return secret;
 }
 
-// L'URL del Web App non si legge in modo affidabile da codice
-// (ScriptApp.getService().getUrl() è noto per restituire un valore vuoto
-// o sbagliato quando chiamato da un menu invece che da doGet/doPost), quindi
-// lo si incolla una volta sola dopo il primo Deploy e resta salvato qui.
+// Un valore impostato a mano vince sempre su quello rilevato in automatico.
+// Se non c'è nulla di salvato, si tenta ScriptApp.getService().getUrl():
+// funziona nella maggior parte dei casi, ma ha bug noti e mai risolti da
+// Google (a volte restituisce /dev invece di /exec, o un deployment ID non
+// più valido dopo certi redeploy) — per questo il risultato viene validato
+// prima di essere usato, e non viene mai salvato automaticamente: resta un
+// tentativo rifatto ad ogni apertura del menu, finché non lo fissi tu con
+// "Imposta URL Web App".
+function getWebAppUrl_() {
+  var stored = PropertiesService.getScriptProperties().getProperty('WEBAPP_URL');
+  if (stored) return { url: stored, source: 'manuale' };
+
+  var auto = '';
+  try {
+    auto = ScriptApp.getService().getUrl() || '';
+  } catch (err) {
+    auto = '';
+  }
+  if (auto && auto.indexOf('/exec') !== -1) {
+    return { url: auto, source: 'rilevato automaticamente' };
+  }
+  return { url: '', source: null };
+}
+
 function setWebAppUrl() {
   var ui = SpreadsheetApp.getUi();
   var props = PropertiesService.getScriptProperties();
   var current = props.getProperty('WEBAPP_URL') || '';
   var resp = ui.prompt(
     'URL del Web App',
-    'Incolla l\'URL che termina in /exec, copiato da Deploy > Gestisci deployment ' +
-      'dopo aver pubblicato questo script come App web.' +
-      (current ? '\n\nValore attuale: ' + current : ''),
+    'Da usare solo se "Mostra configurazione" non rileva l\'URL da solo, o lo rileva ' +
+      'sbagliato (es. finisce in /dev invece di /exec). Incolla l\'URL che termina in ' +
+      '/exec, copiato da Deploy > Gestisci deployment dopo aver pubblicato questo ' +
+      'script come App web. Lascia vuoto e conferma per tornare alla rilevazione automatica.' +
+      (current ? '\n\nValore manuale attuale: ' + current : ''),
     ui.ButtonSet.OK_CANCEL
   );
   if (resp.getSelectedButton() !== ui.Button.OK) return;
@@ -264,22 +286,31 @@ function setWebAppUrl() {
     ui.alert('URL non valido: deve iniziare con https://script.google.com/macros/s/ e terminare in /exec.');
     return;
   }
-  props.setProperty('WEBAPP_URL', url);
+  if (url) {
+    props.setProperty('WEBAPP_URL', url);
+  } else {
+    props.deleteProperty('WEBAPP_URL');
+  }
   showConfig();
 }
 
 function showConfig() {
   var ui = SpreadsheetApp.getUi();
-  var url = PropertiesService.getScriptProperties().getProperty('WEBAPP_URL');
+  var webApp = getWebAppUrl_();
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var activeName = ss.getActiveSheet().getName();
   var otherNames = ss.getSheets()
     .map(function (s) { return s.getName(); })
     .filter(function (n) { return n !== activeName; });
 
+  var urlLine = webApp.url
+    ? webApp.url + '  (' + webApp.source + ')'
+    : '(non rilevato — pubblica il Web App con Deploy, poi riapri questo menu; ' +
+      'se resta vuoto usa "Imposta URL Web App" per incollarlo a mano)';
+
   var lines = [
     'Apps Script Web App URL:',
-    url || '(non impostato — usa "Imposta URL Web App" dopo il Deploy)',
+    urlLine,
     '',
     'Nome del foglio (tab) attivo:',
     activeName
@@ -387,24 +418,28 @@ function jsonOutput_(obj) {
      inviare header di autenticazione, quindi il deployment deve essere
      pubblico; il token condiviso è l'unico controllo di accesso
      disponibile in questo scenario).
-   - Copia l'URL che termina in `/exec` mostrato a fine deploy.
 5. Ricarica la pagina del foglio Google (serve perché `onOpen` giri e
    crei il menu): comparirà **Sheets Logger (GTM)** nella barra dei menu.
-   - Clicca **Imposta URL Web App** e incolla l'URL copiato al punto 4.
-   - Clicca **Mostra configurazione**: si apre un unico popup con i tre
-     valori da incollare nei tag GTM — **URL del Web App**, **nome del
-     foglio (tab)** attivo (e l'elenco degli altri fogli presenti, se ce
-     ne sono) e **token condiviso** (generato al primo utilizzo, non c'è
-     nulla da inventare o scrivere nel codice). Copia ciascun valore nel
-     campo corrispondente del tag: "Apps Script Web App URL", "Nome del
-     foglio (tab)", "Token condiviso".
+   Clicca **Mostra configurazione**: si apre un unico popup con i tre
+   valori da incollare nei tag GTM — **URL del Web App**, **nome del
+   foglio (tab)** attivo (e l'elenco degli altri fogli presenti, se ce ne
+   sono) e **token condiviso** (generato al primo utilizzo, non c'è nulla
+   da inventare o scrivere nel codice). L'URL viene rilevato in automatico
+   nella maggior parte dei casi (`ScriptApp.getService().getUrl()`); se il
+   popup lo mostra come "non rilevato", o lo mostra ma finisce in `/dev`
+   invece di `/exec`, usa **Imposta URL Web App** per incollarlo a mano
+   (copiato da Deploy → Gestisci deployment). Copia ciascun valore nel
+   campo corrispondente del tag: "Apps Script Web App URL", "Nome del
+   foglio (tab)", "Token condiviso".
 6. **Ogni volta che modifichi il codice devi ri-deployare** (Deploy →
    Gestisci deployment → Modifica → Nuova versione), altrimenti gira la
    versione precedente. **L'URL del deployment cambia solo se crei un
    nuovo deployment** (non con "Nuova versione" su uno esistente): in tal
-   caso ripeti "Imposta URL Web App" con il nuovo URL. Il token invece
-   sopravvive sempre, a qualunque redeploy: vive nelle Proprietà dello
-   script, non nel codice.
+   caso riapri "Mostra configurazione" — se avevi un valore impostato a
+   mano e il nuovo URL è diverso, aggiornalo con "Imposta URL Web App"
+   (o lascia vuoto il prompt per tornare alla rilevazione automatica). Il
+   token invece sopravvive sempre, a qualunque redeploy: vive nelle
+   Proprietà dello script, non nel codice.
 
 ## Perché lo script è "container-bound" e non prende uno Spreadsheet ID
 

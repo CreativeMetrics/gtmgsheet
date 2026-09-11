@@ -23,11 +23,13 @@
  * comparirà un menu "Sheets Logger (GTM)" nella barra del foglio con le
  * voci "Mostra configurazione", "Imposta URL Web App" e "Rigenera token".
  * "Mostra configurazione" riassume in un solo popup i tre valori da
- * incollare nei tag GTM (client e/o server): URL del Web App, nome del
- * foglio (tab) e token condiviso. Token e URL vivono in PropertiesService
- * (Proprietà dello script), non nel testo del codice: non finiscono per
- * errore in un file condiviso, in un export del container o in questo
- * stesso repository.
+ * incollare nei tag GTM (client e/o server): URL del Web App (rilevato
+ * automaticamente quando possibile, con "Imposta URL Web App" come
+ * ripiego manuale se la rilevazione fallisce o è sbagliata), nome del
+ * foglio (tab) e token condiviso. Token e URL manuale vivono in
+ * PropertiesService (Proprietà dello script), non nel testo del codice:
+ * non finiscono per errore in un file condiviso, in un export del
+ * container o in questo stesso repository.
  */
 
 function onOpen() {
@@ -49,19 +51,43 @@ function getSecret_() {
   return secret;
 }
 
-// L'URL del Web App non si legge in modo affidabile da codice
-// (ScriptApp.getService().getUrl() è noto per restituire un valore vuoto
-// o sbagliato quando chiamato da un menu invece che da doGet/doPost), quindi
-// lo si incolla una volta sola dopo il primo Deploy e resta salvato qui.
+// Un valore impostato a mano vince sempre su quello rilevato in automatico
+// (così un redeploy che rompesse la rilevazione automatica non cambia
+// nulla se hai già fissato l'URL manualmente). Se non c'è nulla di
+// salvato, si tenta ScriptApp.getService().getUrl(): funziona nella
+// maggior parte dei casi, ma ha bug noti e mai risolti da Google (a volte
+// restituisce l'URL /dev invece di /exec, o un deployment ID non più
+// valido dopo certi redeploy) — per questo il risultato viene validato
+// (deve contenere "/exec") prima di essere usato, e non viene mai salvato
+// automaticamente: resta un tentativo rifatto ad ogni apertura del menu,
+// finché non lo fissi tu con "Imposta URL Web App".
+function getWebAppUrl_() {
+  var stored = PropertiesService.getScriptProperties().getProperty('WEBAPP_URL');
+  if (stored) return { url: stored, source: 'manuale' };
+
+  var auto = '';
+  try {
+    auto = ScriptApp.getService().getUrl() || '';
+  } catch (err) {
+    auto = '';
+  }
+  if (auto && auto.indexOf('/exec') !== -1) {
+    return { url: auto, source: 'rilevato automaticamente' };
+  }
+  return { url: '', source: null };
+}
+
 function setWebAppUrl() {
   var ui = SpreadsheetApp.getUi();
   var props = PropertiesService.getScriptProperties();
   var current = props.getProperty('WEBAPP_URL') || '';
   var resp = ui.prompt(
     'URL del Web App',
-    'Incolla l\'URL che termina in /exec, copiato da Deploy > Gestisci deployment ' +
-      'dopo aver pubblicato questo script come App web.' +
-      (current ? '\n\nValore attuale: ' + current : ''),
+    'Da usare solo se "Mostra configurazione" non rileva l\'URL da solo, o lo rileva ' +
+      'sbagliato (es. finisce in /dev invece di /exec). Incolla l\'URL che termina in ' +
+      '/exec, copiato da Deploy > Gestisci deployment dopo aver pubblicato questo ' +
+      'script come App web. Lascia vuoto e conferma per tornare alla rilevazione automatica.' +
+      (current ? '\n\nValore manuale attuale: ' + current : ''),
     ui.ButtonSet.OK_CANCEL
   );
   if (resp.getSelectedButton() !== ui.Button.OK) return;
@@ -71,22 +97,31 @@ function setWebAppUrl() {
     ui.alert('URL non valido: deve iniziare con https://script.google.com/macros/s/ e terminare in /exec.');
     return;
   }
-  props.setProperty('WEBAPP_URL', url);
+  if (url) {
+    props.setProperty('WEBAPP_URL', url);
+  } else {
+    props.deleteProperty('WEBAPP_URL');
+  }
   showConfig();
 }
 
 function showConfig() {
   var ui = SpreadsheetApp.getUi();
-  var url = PropertiesService.getScriptProperties().getProperty('WEBAPP_URL');
+  var webApp = getWebAppUrl_();
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var activeName = ss.getActiveSheet().getName();
   var otherNames = ss.getSheets()
     .map(function (s) { return s.getName(); })
     .filter(function (n) { return n !== activeName; });
 
+  var urlLine = webApp.url
+    ? webApp.url + '  (' + webApp.source + ')'
+    : '(non rilevato — pubblica il Web App con Deploy, poi riapri questo menu; ' +
+      'se resta vuoto usa "Imposta URL Web App" per incollarlo a mano)';
+
   var lines = [
     'Apps Script Web App URL:',
-    url || '(non impostato — usa "Imposta URL Web App" dopo il Deploy)',
+    urlLine,
     '',
     'Nome del foglio (tab) attivo:',
     activeName

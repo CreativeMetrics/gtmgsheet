@@ -265,8 +265,9 @@ come per il tag client-side — vedi `apps-script/Code.gs` nel repository
    `web-client-tag/google-sheets-logger.tpl` (sezione Documentazione) o in
    `apps-script/Code.gs`: stesso script, stesso deployment. Nessun valore
    si scrive nel codice: apri il foglio, menu "Sheets Logger (GTM)" →
-   "Imposta URL Web App" (una volta, dopo il Deploy) → "Mostra
-   configurazione" per leggere URL, nome del foglio e token insieme.
+   "Mostra configurazione" per leggere URL (rilevato in automatico nella
+   maggior parte dei casi, "Imposta URL Web App" come ripiego manuale se
+   serve), nome del foglio e token insieme.
 2. In GTM (container Server): importa questo file (Templates → New →
    menu ⋮ → Import), crea il tag, incolla lo stesso URL `/exec`, nome
    foglio e token mostrati dal menu, già usati per il tag client-side (o

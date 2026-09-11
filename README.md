@@ -48,18 +48,21 @@ docs/
 2. Incolla il contenuto di `apps-script/Code.gs` (nessuna costante da
    modificare: token e URL si gestiscono dal menu, vedi sotto).
 3. Deploy → Nuovo deployment → App web → Esegui come "Me" → Accesso
-   "Chiunque". Copia l'URL `/exec` mostrato a fine deploy.
+   "Chiunque".
 4. Ricarica la pagina del foglio: comparirà il menu **Sheets Logger
    (GTM)**.
-   - **Imposta URL Web App** → incolla l'URL copiato al punto 3 (si
-     salva in `PropertiesService`; `ScriptApp.getService().getUrl()` non
-     è affidabile se chiamato da un menu, per questo si incolla a mano
-     una volta sola).
    - **Mostra configurazione** → un unico popup con i tre valori pronti
-     da incollare nei tag: **URL del Web App**, **nome del foglio (tab)**
-     attivo (con l'elenco degli altri fogli, se il file ne ha più di
-     uno) e **token condiviso** (generato al primo utilizzo, mai da
-     inventare a mano).
+     da incollare nei tag: **URL del Web App** (rilevato in automatico
+     nella maggior parte dei casi via `ScriptApp.getService().getUrl()`),
+     **nome del foglio (tab)** attivo (con l'elenco degli altri fogli, se
+     il file ne ha più di uno) e **token condiviso** (generato al primo
+     utilizzo, mai da inventare a mano).
+   - **Imposta URL Web App** → solo se la rilevazione automatica manca o
+     è sbagliata (bug noto di quell'API: a volte restituisce `/dev`
+     invece di `/exec`, o un ID non più valido dopo un redeploy): incolla
+     qui l'URL corretto, copiato da Deploy → Gestisci deployment. Un
+     valore impostato così vince sempre su quello rilevato in automatico;
+     lascialo vuoto per tornare alla rilevazione automatica.
 
 Il codice è duplicato anche nella sezione Documentazione di
 `google-sheets-logger.tpl` (`___NOTES___`), così resta visibile
