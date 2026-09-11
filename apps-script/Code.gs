@@ -236,8 +236,13 @@ function handleRequest_(p) {
       return jsonOutput_({ ok: false, error: 'sheet_not_found: ' + sheetName });
     }
 
-    // Parametri riservati, mai trattati come nomi di colonna
-    var reserved = { sheet: 1, token: 1, _order: 1, ping: 1, _dedupe: 1 };
+    // Parametri riservati, mai trattati come nomi di colonna. "timestamp"
+    // è incluso qui anche se non è un parametro di controllo: è il nome
+    // che questo script usa per la propria colonna generata in automatico,
+    // e trattarlo come riservato evita un'intestazione duplicata se un
+    // tag (mal configurato o precedente a questa protezione) invia una
+    // colonna con lo stesso nome.
+    var reserved = { sheet: 1, token: 1, _order: 1, ping: 1, _dedupe: 1, timestamp: 1 };
 
     // Ordine dichiarato dal tag (preserva l'ordine impostato nella tabella del tag)
     var declared = String(p._order || '').split('|').filter(function (c) { return c; });
@@ -257,15 +262,28 @@ function handleRequest_(p) {
       : [];
 
     if (headers.length === 0 || headers.join('') === '') {
-      // Foglio vuoto: crea l'intestazione la prima volta
-      headers = ['timestamp'].concat(incoming);
+      // Foglio vuoto: crea l'intestazione la prima volta. "timestamp" è
+      // già escluso da "incoming" tramite reserved, ma un filtro esplicito
+      // qui protegge anche una richiesta scritta a mano (non passata dal
+      // template GTM) che ignorasse quella protezione.
+      headers = ['timestamp'].concat(incoming.filter(function (c) { return c !== 'timestamp'; }));
       sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
       // Fissa il formato della colonna A (sempre "timestamp" qui) a
       // yyyy-mm-dd hh:mm:ss per tutta l'estensione del foglio, così ogni
       // riga futura lo eredita a prescindere da locale o formattazione
       // preesistente della cella (senza questo, un Date scritto via API
       // può apparire come numero seriale finché Sheets non lo rileva).
-      sheet.getRange(2, 1, sheet.getMaxRows() - 1, 1).setNumberFormat('yyyy-mm-dd hh:mm:ss');
+      // In un try/catch perché è cosmetico, non critico: un'eventuale
+      // eccezione (es. foglio ridotto manualmente a una sola riga) non
+      // deve impedire la scrittura della riga qui sotto.
+      try {
+        var formatRows = sheet.getMaxRows() - 1;
+        if (formatRows > 0) {
+          sheet.getRange(2, 1, formatRows, 1).setNumberFormat('yyyy-mm-dd hh:mm:ss');
+        }
+      } catch (fmtErr) {
+        // ignorato di proposito: la formattazione è opzionale
+      }
     } else {
       // Aggiunge in coda le colonne mai viste prima, senza toccare quelle esistenti
       var missing = incoming.filter(function (c) { return headers.indexOf(c) === -1; });
@@ -278,8 +296,18 @@ function handleRequest_(p) {
     // Costruisce la riga allineata all'intestazione (non all'ordine di arrivo),
     // neutralizzando i valori che appendRow tratterebbe come formula
     // (vedi sanitizeForSheet_ più sotto).
+    //
+    // IMPORTANTE: se un'intestazione esistente si chiamasse esattamente
+    // "token" (o un altro nome riservato) — es. digitata a mano prima di
+    // adottare questo script, o in un foglio creato con una versione
+    // precedente senza questa protezione — "p[h]" leggerebbe il valore
+    // di controllo vero e proprio (il token segreto, il nome del foglio,
+    // ecc.) e lo scriverebbe in chiaro nella cella. Il controllo su
+    // "reserved" qui blocca questo caso scrivendo una cella vuota, a
+    // prescindere da cosa contenga effettivamente l'intestazione.
     var row = headers.map(function (h) {
       if (h === 'timestamp') return new Date();
+      if (reserved[h]) return '';
       return sanitizeForSheet_(p[h] !== undefined ? p[h] : '');
     });
 

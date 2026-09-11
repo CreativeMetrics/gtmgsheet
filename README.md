@@ -130,11 +130,23 @@ SheetDB), per riferimento se dovesse servire.
 ## Nomi di colonna riservati
 
 Nella tabella "Dati da scrivere" di entrambi i tag, non usare `sheet`,
-`token`, `_order`, `ping` o `_dedupe` come "Nome colonna": sono gli stessi
-nomi usati dal protocollo tra il tag e Apps Script per il nome del foglio,
-il token, l'ordine delle colonne, l'health-check e la deduplicazione. Se
-una colonna li usa, viene scartata con un avviso in console invece di
-scrivere un dato ambiguo o di rompere silenziosamente l'autenticazione.
+`token`, `_order`, `ping`, `_dedupe` o `timestamp` come "Nome colonna":
+sono gli stessi nomi usati dal protocollo tra il tag e Apps Script per il
+nome del foglio, il token, l'ordine delle colonne, l'health-check, la
+deduplicazione e la colonna data/ora generata in automatico. Il nome
+colonna non può nemmeno contenere il carattere `|` (separatore interno
+usato per preservare l'ordine). Se una colonna viola una di queste
+regole, viene scartata con un avviso in console invece di scrivere un
+dato ambiguo, farlo sparire in silenzio, o (nel caso di un'intestazione
+preesistente chiamata come uno di questi nomi) esporre il valore di
+controllo reale — vedi la nota di sicurezza qui sotto.
+
+**Nota di sicurezza**: la protezione sopra riguarda i nomi che il *tag*
+può inviare. Se però un foglio avesse già, per storia pregressa, una
+colonna digitata a mano con uno di questi nomi (es. una colonna letterale
+chiamata "token"), Apps Script si difende comunque: `handleRequest_`
+scrive sempre una cella vuota per quelle intestazioni, non il valore di
+controllo vero e proprio, a prescindere da come sia nata la colonna.
 
 ## Deduplicazione eventi (opzionale)
 

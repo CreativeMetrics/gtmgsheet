@@ -83,7 +83,7 @@ ___TEMPLATE_PARAMETERS___
         "type": "TEXT"
       }
     ],
-    "help": "Ogni riga diventa una colonna nel foglio (creata in automatico se non esiste ancora, gestito dall'Apps Script). Qui puoi mappare direttamente variabili di event data, es. {{Event Name}}, {{Client ID}}. Nomi riservati (non usarli come nome colonna, verrebbero scartati): sheet, token, _order, ping, _dedupe."
+    "help": "Ogni riga diventa una colonna nel foglio (creata in automatico se non esiste ancora, gestito dall'Apps Script). Qui puoi mappare direttamente variabili di event data, es. {{Event Name}}, {{Client ID}}. Nomi riservati (non usarli come nome colonna, verrebbero scartati): sheet, token, _order, ping, _dedupe, timestamp. Il nome colonna non può contenere il carattere \"|\"."
   },
   {
     "type": "CHECKBOX",
@@ -113,9 +113,10 @@ const debug = data.enableLogging;
 // Nomi riservati dal protocollo con Apps Script: una colonna chiamata
 // esattamente uno di questi verrebbe silenziosamente sovrascritta più
 // sotto dal valore di controllo con lo stesso nome (payload.token = token,
-// ecc.), perdendo il dato che intendevi scrivere. Si scarta quindi la
-// colonna con un log, invece di perderla in silenzio.
-const reserved = { sheet: 1, token: 1, _order: 1, ping: 1, _dedupe: 1 };
+// ecc.), perdendo il dato che intendevi scrivere. "timestamp" è incluso
+// perché è il nome della colonna generata automaticamente da Apps Script.
+// Si scarta quindi la colonna con un log, invece di perderla in silenzio.
+const reserved = { sheet: 1, token: 1, _order: 1, ping: 1, _dedupe: 1, timestamp: 1 };
 
 const payload = {};
 let order = '';
@@ -124,7 +125,13 @@ for (let i = 0; i < rows.length; i++) {
   const name = makeString(rows[i].column1 || '');
   if (!name) continue;
   if (reserved[name]) {
-    log('Google Sheets Writer - colonna "' + name + '" ignorata: nome riservato (sheet/token/_order/ping/_dedupe).');
+    log('Google Sheets Writer - colonna "' + name + '" ignorata: nome riservato (sheet/token/_order/ping/_dedupe/timestamp).');
+    continue;
+  }
+  // "|" è il separatore usato in _order: una colonna che lo contenesse
+  // spezzerebbe la ricostruzione dell'ordine lato Apps Script.
+  if (name.indexOf('|') !== -1) {
+    log('Google Sheets Writer - colonna "' + name + '" ignorata: non può contenere il carattere "|".');
     continue;
   }
 
