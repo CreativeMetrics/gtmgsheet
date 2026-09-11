@@ -20,7 +20,7 @@ ___INFO___
     "displayName": "",
     "thumbnail": ""
   },
-  "description": "Scrive una riga in un Google Sheet chiamando direttamente la Google Sheets API v4 (spreadsheets.values.append), autenticandosi con le Application Default Credentials del container server (nessun Apps Script, nessun endpoint pubblico, nessuna chiave di service account da gestire).",
+  "description": "Scrive una riga in un Google Sheet chiamando in POST lo stesso Apps Script Web App usato dal tag client-side. Nessuna autenticazione alle API Google, nessun service account, nessun progetto GCP richiesto: funziona con qualunque hosting del container server (Google Cloud, Stape, self-hosted).",
   "containerContexts": ["SERVER"]
 }
 
@@ -30,27 +30,33 @@ ___TEMPLATE_PARAMETERS___
 [
   {
     "type": "TEXT",
-    "name": "spreadsheetId",
-    "displayName": "Spreadsheet ID",
+    "name": "webAppUrl",
+    "displayName": "Apps Script Web App URL",
     "simpleValueType": true,
     "valueValidators": [
       {
         "type": "NON_EMPTY"
+      },
+      {
+        "type": "REGEX",
+        "args": ["^https://script\\.google\\.com/macros/s/.+/exec$"]
       }
     ],
-    "help": "L'ID nel URL del foglio: https://docs.google.com/spreadsheets/d/QUESTO_ID/edit. A differenza del tag client-side, qui è sicuro impostarlo come configurazione del tag: non transita mai verso il browser."
+    "help": "Lo stesso URL /exec usato dal tag client-side (stesso deployment Apps Script, vedi apps-script/Code.gs nel repository). Nessuna Google API, nessun service account: qui è solo una chiamata HTTP verso questo endpoint."
   },
   {
     "type": "TEXT",
     "name": "sheetName",
     "displayName": "Nome del foglio (tab)",
     "simpleValueType": true,
-    "defaultValue": "Foglio1",
-    "valueValidators": [
-      {
-        "type": "NON_EMPTY"
-      }
-    ]
+    "help": "Nome della scheda dentro lo spreadsheet, es. Foglio1. Lascia vuoto per usare la prima scheda."
+  },
+  {
+    "type": "TEXT",
+    "name": "secretToken",
+    "displayName": "Token condiviso",
+    "simpleValueType": true,
+    "help": "Deve combaciare con la costante SHARED_SECRET impostata nell'Apps Script. A differenza del tag client-side, qui il valore non transita mai verso il browser: resta nella configurazione del container server."
   },
   {
     "type": "SIMPLE_TABLE",
@@ -70,28 +76,11 @@ ___TEMPLATE_PARAMETERS___
         "type": "TEXT"
       }
     ],
-    "help": "Ogni riga della tabella è una colonna del foglio, nell'ordine in cui la elenchi qui. A differenza del client-side, qui puoi mappare direttamente variabili di event data (es. {{Event Name}}, {{Client ID}}) come valore."
-  },
-  {
-    "type": "SELECT",
-    "name": "valueInputOption",
-    "displayName": "Interpretazione valori",
-    "selectItems": [
-      {
-        "value": "USER_ENTERED",
-        "displayValue": "Come se digitati a mano (formule, date e numeri interpretati)"
-      },
-      {
-        "value": "RAW",
-        "displayValue": "Testo grezzo (nessuna interpretazione)"
-      }
-    ],
-    "simpleValueType": true,
-    "defaultValue": "USER_ENTERED"
+    "help": "Ogni riga diventa una colonna nel foglio (creata in automatico se non esiste ancora, gestito dall'Apps Script). Qui puoi mappare direttamente variabili di event data, es. {{Event Name}}, {{Client ID}}."
   },
   {
     "type": "CHECKBOX",
-    "name": "logToConsoleEnabled",
+    "name": "enableLogging",
     "checkboxText": "Abilita log di debug in console (solo modalità preview/debug)",
     "simpleValueType": true,
     "defaultValue": false
@@ -102,57 +91,64 @@ ___TEMPLATE_PARAMETERS___
 ___SANDBOXED_JS_FOR_SERVER_TEMPLATE___
 
 const encodeUriComponent = require('encodeUriComponent');
-const getGoogleAuth = require('getGoogleAuth');
 const JSON = require('JSON');
 const log = require('logToConsole');
 const makeString = require('makeString');
 const sendHttpRequest = require('sendHttpRequest');
-const Promise = require('Promise');
 
-const spreadsheetId = data.spreadsheetId;
-const sheetName = data.sheetName || 'Foglio1';
+const webAppUrl = data.webAppUrl;
+const sheetName = data.sheetName || '';
+const token = data.secretToken || '';
 const rows = data.rowData || [];
-const valueInputOption = data.valueInputOption || 'USER_ENTERED';
-const debug = data.logToConsoleEnabled;
+const debug = data.enableLogging;
 
-const values = [];
+const payload = {};
+let order = '';
+
 for (let i = 0; i < rows.length; i++) {
+  const name = makeString(rows[i].column1 || '');
+  if (!name) continue;
+
   const raw = rows[i].column2;
-  values.push((raw === undefined || raw === null) ? '' : makeString(raw));
+  // NON usare "raw || ''" al posto di questo controllo: trasformerebbe
+  // valori legittimi come 0 o false in una stringa vuota indistinguibile
+  // da un campo davvero assente.
+  payload[name] = (raw === undefined || raw === null) ? '' : makeString(raw);
+  order += (order ? '|' : '') + name;
 }
 
-const auth = getGoogleAuth({
-  scopes: ['https://www.googleapis.com/auth/spreadsheets']
-});
+payload._order = order;
+if (sheetName) payload.sheet = sheetName;
+if (token) payload.token = token;
 
-const range = sheetName + '!A1';
-const url = 'https://sheets.googleapis.com/v4/spreadsheets/' +
-  encodeUriComponent(spreadsheetId) +
-  '/values/' + encodeUriComponent(range) +
-  ':append?valueInputOption=' + encodeUriComponent(valueInputOption) +
-  '&insertDataOption=INSERT_ROWS';
-
-const body = JSON.stringify({ values: [values] });
+const body = JSON.stringify(payload);
 
 if (debug) {
-  log('Google Sheets Writer - POST ' + url);
+  log('Google Sheets Writer - POST ' + webAppUrl);
   log('Google Sheets Writer - body ' + body);
 }
 
-sendHttpRequest(url, {
+sendHttpRequest(webAppUrl, {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
-  authorization: auth,
   timeout: 5000
 }, body).then((result) => {
+  let parsed = null;
+  try {
+    parsed = JSON.parse(result.body);
+  } catch (e) {
+    // risposta non JSON: trattata come fallimento sotto
+  }
+
   if (debug) {
     log('Google Sheets Writer - status ' + result.statusCode);
     log('Google Sheets Writer - response ' + result.body);
   }
-  if (result.statusCode >= 200 && result.statusCode < 300) {
+
+  if (result.statusCode >= 200 && result.statusCode < 300 && parsed && parsed.ok) {
     data.gtmOnSuccess();
   } else {
-    log('Google Sheets Writer - errore HTTP ' + result.statusCode + ': ' + result.body);
+    log('Google Sheets Writer - errore: status ' + result.statusCode + ', body ' + result.body);
     data.gtmOnFailure();
   }
 }, (error) => {
@@ -185,7 +181,11 @@ ___SERVER_PERMISSIONS___
             "listItem": [
               {
                 "type": 1,
-                "string": "https://sheets.googleapis.com/*"
+                "string": "https://script.google.com/*"
+              },
+              {
+                "type": 1,
+                "string": "https://script.googleusercontent.com/*"
               }
             ]
           }
@@ -231,80 +231,88 @@ ___NOTES___
 ## Cosa fa questo template
 
 Tag lato **server** (container sGTM) che scrive una riga in un Google
-Sheet chiamando direttamente `spreadsheets.values.append` della Google
-Sheets API v4, autenticandosi con `getGoogleAuth` (Application Default
-Credentials del container), letto tramite `sendHttpRequest`.
+Sheet chiamando in **POST** lo stesso Apps Script Web App usato dal tag
+client-side (`web-client-tag/google-sheets-logger.tpl`), tramite
+`sendHttpRequest`.
 
-Nessun Apps Script, nessun endpoint `/exec` pubblico, nessuna chiave JSON
-di service account da generare o custodire: è lo stesso pattern usato
-dalle guide ufficiali per integrare sGTM con Google Sheets/BigQuery quando
-il container gira su infrastruttura Google Cloud (App Engine o Cloud Run).
+Volutamente **non** usa `getGoogleAuth` / Application Default Credentials
+/ Sheets API: nessun progetto Google Cloud da configurare, nessuna Google
+Sheets API da abilitare, nessun service account da condividere sul foglio.
+L'unico requisito è l'Apps Script pubblicato come Web App, esattamente
+come per il tag client-side — vedi `apps-script/Code.gs` nel repository
+(lo stesso file, non serve una seconda versione).
 
-## Requisito: il container deve girare su Google Cloud
+## Perché farlo dal server invece che dal client, se l'Apps Script è lo stesso
 
-`getGoogleAuth` con `authType` di default (ADC, Application Default
-Credentials) funziona perché il runtime del container server-side gira
-dentro un progetto GCP e ha un service account di default associato
-(App Engine o Compute Engine/Cloud Run). **Se il tuo container non gira
-su infrastruttura Google Cloud tua** (es. hosting gestito da terzi che non
-espone questo meccanismo), questo approccio non è applicabile: in quel caso
-la strada è un tag già pronto che gestisce l'autenticazione lui stesso
-(es. il tag Google Sheets di Stape, che usa una propria connessione OAuth),
-non questo template.
+- **Il token e l'URL dell'Apps Script non arrivano mai al browser.** Nel
+  tag client-side, `webAppUrl` e `secretToken` finiscono nel JavaScript
+  eseguito nella pagina: chiunque apra gli strumenti di sviluppo o esporti
+  il container li legge in chiaro. Qui restano nella configurazione del
+  container server, mai esposti a un visitatore del sito.
+- **Risposta reale, non opaca.** Il tag client-side usa `sendPixel`, che
+  non può leggere l'esito della richiesta in modo affidabile (Apps Script
+  risponde con JSON, non un'immagine, quindi il browser la segna sempre
+  come "fallita" anche a scrittura riuscita). Qui `sendHttpRequest` è una
+  vera chiamata HTTP server-to-server: si legge lo status code e il body
+  della risposta, quindi il tag riporta in preview un successo/fallimento
+  che corrisponde a quello reale.
+- **Nessun limite di lunghezza URL**: i dati viaggiano nel body JSON della
+  POST, non in query string.
 
 ## Setup
 
-1. **Individua il service account di default** del progetto GCP che ospita
-   il container sGTM:
-   - App Engine: `NOME-PROGETTO@appspot.gserviceaccount.com`
-   - Cloud Run / Compute Engine: `NUMERO-PROGETTO-compute@developer.gserviceaccount.com`
+1. Segui il setup Apps Script descritto in
+   `web-client-tag/google-sheets-logger.tpl` (sezione Documentazione) o in
+   `apps-script/Code.gs`: stesso script, stesso deployment, stesso
+   `SHARED_SECRET`.
+2. In GTM (container Server): importa questo file (Templates → New →
+   menu ⋮ → Import), crea il tag, incolla lo stesso URL `/exec` e lo
+   stesso token condiviso usati per il tag client-side.
+3. Compila la tabella "Dati da scrivere" mappando variabili di event data
+   (es. `{{Event Name}}`, `{{Client ID}}`, `{{Timestamp}}`) come valore di
+   ogni colonna.
+4. Assegna un trigger.
+5. In preview, apri l'evento → tab del tag → verifica la richiesta HTTP in
+   uscita verso `script.google.com`/`script.googleusercontent.com` e lo
+   status/body di risposta (`{"ok":true}` = riga scritta).
 
-   Lo trovi in Google Cloud Console → IAM e amministrazione → Account di
-   servizio, oppure nei dettagli dell'istanza App Engine/Cloud Run.
-
-2. **Abilita la Google Sheets API** nello stesso progetto GCP (Cloud
-   Console → API e servizi → Libreria → "Google Sheets API" → Abilita).
-
-3. **Condividi il foglio** con quel service account, con permesso
-   **Editor** (Condividi → incolla l'indirizzo email del service account).
-   Questo sostituisce completamente qualunque gestione di credenziali nel
-   codice del tag: l'autorizzazione vive interamente nella condivisione del
-   file su Google Drive/Sheets.
-
-4. In GTM, aggiungi il template (Templates → New → Import → seleziona
-   questo file `.tpl`), crea il tag, imposta:
-   - **Spreadsheet ID**: l'ID nell'URL del foglio.
-   - **Nome del foglio**: il nome esatto della scheda (case-sensitive).
-   - **Dati da scrivere**: una riga per colonna, con il valore mappato a
-     variabili di event data (es. `{{Event Name}}`, `{{Client ID}}`,
-     `{{Timestamp}}`).
-   - Trigger a piacere (es. su tutti gli eventi, o solo su eventi
-     specifici che vuoi loggare).
-
-5. In **preview**, apri l'evento → tab del tag → verifica la richiesta
-   HTTP in uscita verso `sheets.googleapis.com` e lo status code (200/201
-   = riga scritta). Se GTM richiede permessi aggiuntivi non presenti in
-   questo `.tpl` (rilevamento automatico dal codice), apri il tab
-   **Permissions** del template e usa il pulsante per farli rilevare/
-   aggiornare dal codice prima di salvare.
+Se GTM richiede permessi aggiuntivi non presenti in questo `.tpl`
+(rilevamento automatico dal codice), apri il tab **Permissions** del
+template e usa il pulsante per farli rilevare/aggiornare dal codice prima
+di salvare.
 
 ## Colonne e intestazione
 
-A differenza del tag client-side, questo template **non gestisce da solo
-l'allineamento con l'intestazione del foglio**: scrive i valori nell'ordine
-in cui li elenchi nella tabella "Dati da scrivere", a partire dalla colonna
-A. Se l'ordine delle colonne nel foglio cambia manualmente, aggiorna di
-conseguenza l'ordine nel tag. Questo è volutamente più semplice del tag
-client-side perché qui non c'è motivo di ricostruire dinamicamente
-l'intestazione: la tabella del tag è già la fonte di verità e la modifichi
-direttamente in GTM quando serve.
+L'allineamento colonna→valore è gestito dallo stesso Apps Script del tag
+client-side (allineamento dinamico all'intestazione del foglio, con
+creazione automatica delle colonne nuove): qui il template invia lo stesso
+formato (`_order`, `sheet`, `token` più le coppie nome/valore), solo come
+body JSON di una POST invece che come query string di una GET.
 
-## Sicurezza
+## Sicurezza — cosa resta vero comunque
 
-- Nessun endpoint pubblico: la scrittura avviene interamente
-  server-to-server tra il container sGTM e le API Google.
-- L'unico punto di accesso è la condivisione del foglio con il service
-  account: revocarla blocca immediatamente la scrittura.
-- `spreadsheetId` qui è configurazione del tag, non un parametro che
-  transita verso il browser: nessun rischio di scrittura in fogli non
-  previsti da parte di terzi che leggano il container.
+- L'endpoint Apps Script resta **pubblico** (chiunque ne conosca l'URL può
+  chiamarlo): qui però l'URL non è mai esposto al browser, quindi la
+  superficie di attacco pratica è molto più piccola che nel tag
+  client-side. Il token condiviso resta comunque l'unico controllo
+  d'accesso reale — non abbassare la guardia solo perché "è lato server".
+- Quote giornaliere di esecuzione di Apps Script restano valide anche
+  chiamandolo da qui.
+- Nessuna dipendenza da un progetto Google Cloud specifico: funziona
+  identico se il container server gira su App Engine, Cloud Run, Stape o
+  altro hosting.
+
+## Alternativa scartata volutamente: Sheets API + Application Default Credentials
+
+Una versione precedente di questo template usava `getGoogleAuth` +
+`sendHttpRequest` per chiamare direttamente `spreadsheets.values.append`
+della Google Sheets API v4, senza Apps Script. Tecnicamente valida (è il
+pattern documentato da Google per integrare sGTM con Sheets quando il
+container gira su Google Cloud), ma richiede: abilitare la Sheets API sul
+progetto GCP, individuare il service account di default del container e
+condividere il foglio con quell'indirizzo, e funziona solo se il container
+gira su infrastruttura Google Cloud. Questo template la sostituisce
+volutamente con la chiamata all'Apps Script per evitare quel setup e quella
+dipendenza da GCP; il dettaglio della via API resta comunque documentato in
+`docs/no-apps-script-alternatives.md` per riferimento futuro, nel caso
+serva rivalutarla.

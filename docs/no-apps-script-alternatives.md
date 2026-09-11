@@ -1,38 +1,55 @@
 # Esiste un modo per non usare Apps Script nello sheet?
 
-Risposta breve: **sì, ma solo uscendo dal client-side puro**. Per scrivere
-su Google Sheets serve sempre autenticarsi alle API Google in qualche modo;
-la domanda vera è *dove* vive quell'autenticazione. Di seguito le opzioni,
-in ordine di quanto risolvono bene il problema.
+Nota sullo stato attuale di questo repository: **entrambi** i tag
+(`web-client-tag/google-sheets-logger.tpl` e
+`server-side-tag/google-sheets-writer.tpl`) dipendono dallo stesso Apps
+Script, per scelta esplicita — niente Google Cloud, niente Sheets API,
+niente service account da configurare o condividere. Questo documento
+resta come riferimento delle alternative valutate, per il caso in cui in
+futuro si voglia eliminare anche l'Apps Script.
 
-## 1. Passa al tag server-side (`server-side-tag/google-sheets-writer.tpl`) — consigliata
+Risposta breve alla domanda del titolo: **sì, ma solo uscendo dal
+client-side puro**. Per scrivere su Google Sheets senza alcuno script
+serve comunque autenticarsi alle API Google in qualche modo; la domanda
+vera è *dove* vive quell'autenticazione. Di seguito le opzioni, in ordine
+di quanto risolvono bene il problema.
 
-Se hai già (o puoi attivare) un container **server-side GTM** che gira su
-Google Cloud (App Engine o Cloud Run, cioè il setup "ufficiale" quando crei
-un container server da GTM), non ti serve alcun Apps Script:
+## 1. Tag server-side con Sheets API diretta (non usata in questo repo)
 
-- Il tag server-side chiama direttamente la Google Sheets API v4
-  (`spreadsheets.values.append`).
-- L'autenticazione usa `getGoogleAuth` con le **Application Default
+Se il container server-side gira su Google Cloud (App Engine o Cloud Run,
+il setup "ufficiale" quando crei un container server da GTM), è possibile
+eliminare del tutto l'Apps Script facendo chiamare al tag server-side
+direttamente la Google Sheets API v4 (`spreadsheets.values.append`):
+
+- L'autenticazione userebbe `getGoogleAuth` con le **Application Default
   Credentials** del container: nessuna chiave di service account da
   generare, copiare o custodire nel codice.
-- L'unico passo di "autorizzazione" è condividere il foglio (permesso
-  Editor) con l'indirizzo email del service account di default del
-  progetto GCP — esattamente come condivideresti un foglio con un
+- L'unico passo di "autorizzazione" sarebbe condividere il foglio
+  (permesso Editor) con l'indirizzo email del service account di default
+  del progetto GCP — esattamente come condivideresti un foglio con un
   collega.
-- Nessun endpoint pubblico esposto: tutto avviene server-to-server tra il
-  tuo container e le API Google.
+- Nessun endpoint pubblico esposto: tutto avverrebbe server-to-server tra
+  il container e le API Google.
 
-Vedi le istruzioni complete nel tab Documentazione del template
-(`server-side-tag/google-sheets-writer.tpl`, sezione `___NOTES___`).
+**Perché il template di questo repository non la usa**: richiede comunque
+un setup non banale (abilitare la Sheets API sul progetto, individuare il
+service account di default, condividere il foglio) ed è legata a doppio
+filo a Google Cloud — non funziona se il container server-side è ospitato
+altrove (es. Stape o un hosting che non espone le ADC di un progetto GCP).
+Il tag `google-sheets-writer.tpl` in questo repo sceglie invece di
+riutilizzare lo stesso Apps Script del tag client-side, chiamato in POST:
+stesso identico setup su qualunque hosting, nessuna dipendenza da Google
+Cloud. Se in futuro serve comunque questa via (es. per rimuovere del tutto
+la dipendenza da Apps Script e i suoi limiti di quota), lo scheletro del
+codice sandboxed è:
 
-**Limite**: funziona perché il container gira su infrastruttura Google
-Cloud. Se il tuo sGTM è ospitato altrove (es. un hosting terzo che non
-espone le Application Default Credentials di un progetto GCP), questo
-meccanismo di autenticazione non è disponibile: in quel caso la strada
-realistica è un tag già pronto che gestisce da solo l'autenticazione verso
-Google (es. il tag Google Sheets di Stape, con una propria connessione
-OAuth), non un template scritto da zero.
+```javascript
+const auth = getGoogleAuth({ scopes: ['https://www.googleapis.com/auth/spreadsheets'] });
+const url = 'https://sheets.googleapis.com/v4/spreadsheets/' + encodeUriComponent(spreadsheetId) +
+  '/values/' + encodeUriComponent(range) + ':append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS';
+sendHttpRequest(url, { method: 'POST', headers: {'Content-Type':'application/json'}, authorization: auth, timeout: 5000 },
+  JSON.stringify({ values: [rowValues] }));
+```
 
 ## 2. Il "trucco" del Google Form (zero codice, ma non un vero sostituto)
 
@@ -71,7 +88,7 @@ parametro `entry.NNNNNN` al posto dei nomi colonna liberi.
 Va bene per un caso semplice e a bassa criticità (poche colonne fisse,
 nessun dato sensibile), non per un log strutturato che evolve nel tempo.
 
-## 3. Servizi terzi (Sheety, SheetDB, sheet.best, Make/Zapier + webhook)
+## 3. Servizi terzi (Sheety, SheetDB, sheet.best, Make/Zapier + webhook) — non usata in questo repo
 
 Trasformano un Google Sheet in un endpoint REST senza che tu scriva
 Apps Script. Comodi, ma:
@@ -83,13 +100,13 @@ Apps Script. Comodi, ma:
 - Aggiungono una dipendenza esterna in più nella catena, con il suo tempo
   di attivazione/latenza e un altro punto di failure da monitorare.
 
-## Cosa farei io
+## Cosa fa questo repository
 
-Se hai già il container server-side (e dal contesto sembra di sì, visto
-che lo usi già per le trasformazioni PII): usa il tag server-side di
-questo repository. Risolve alla radice sia il problema "niente Apps
-Script" sia il problema "endpoint pubblico scrivibile da chiunque" del
-tag client-side. Tieni comunque anche il tag client-side per i casi in cui
-ti serva loggare qualcosa che accade solo nel browser e non arriva mai al
+Usa Apps Script per entrambi i tag, chiamato in POST dal server invece che
+in GET dal browser quando possibile: elimina il problema "endpoint
+esposto al browser" (URL e token restano nella configurazione del
+container server, mai visibili a un visitatore del sito) senza legarsi a
+Google Cloud. Tieni comunque anche il tag client-side per i casi in cui ti
+serva loggare qualcosa che accade solo nel browser e non arriva mai al
 server (es. un errore JS, un'interazione UI che non generi come evento
 verso sGTM).
