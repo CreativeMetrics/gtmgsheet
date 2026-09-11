@@ -292,7 +292,20 @@ L'allineamento colonna→valore è gestito dallo stesso Apps Script del tag
 client-side (allineamento dinamico all'intestazione del foglio, con
 creazione automatica delle colonne nuove): qui il template invia lo stesso
 formato (`_order`, `sheet`, `token` più le coppie nome/valore), solo come
-body JSON di una POST invece che come query string di una GET.
+body JSON di una POST invece che come query string di una GET. Lo stesso
+Apps Script neutralizza anche i valori che inizierebbero per `= + - @`
+(rischio di formula injection su Sheets se un valore mappato da event data
+finisce nella cella tal quale — vedi `sanitizeForSheet_` in `Code.gs`).
+
+## Manutenzione — archiviazione righe vecchie
+
+I tab scritti da questo tag beneficiano della stessa archiviazione
+opzionale descritta in `apps-script/Code.gs` e nel README: il menu
+**Sheets Logger (GTM)** → **Archiviazione righe vecchie**, aperto dal
+foglio Google, sposta le righe più vecchie di N giorni in un tab
+`<Foglio> - Archivio`, a mano o con un trigger automatico mensile. Non
+serve configurare nulla lato tag: si applica a qualunque tab abbia una
+colonna `timestamp` in intestazione.
 
 ## Sicurezza — cosa resta vero comunque
 

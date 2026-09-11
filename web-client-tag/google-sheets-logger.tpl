@@ -224,11 +224,17 @@ senza la gestione di permessi/versioning di un template).
 
 ```javascript
 function onOpen() {
-  SpreadsheetApp.getUi()
-    .createMenu('Sheets Logger (GTM)')
+  var ui = SpreadsheetApp.getUi();
+  ui.createMenu('Sheets Logger (GTM)')
     .addItem('Mostra configurazione (URL, foglio, token)', 'showConfig')
     .addItem('Imposta URL Web App', 'setWebAppUrl')
     .addItem('Rigenera token', 'regenerateSecret')
+    .addSeparator()
+    .addSubMenu(ui.createMenu('Archiviazione righe vecchie')
+      .addItem('Archivia ora', 'archiveOldRowsNow')
+      .addItem('Imposta giorni di conservazione', 'setArchiveAfterDays')
+      .addItem('Attiva archiviazione automatica mensile', 'enableAutoArchiving')
+      .addItem('Disattiva archiviazione automatica', 'disableAutoArchiving'))
     .addToUi();
 }
 
@@ -333,7 +339,8 @@ function regenerateSecret() {
   var ui = SpreadsheetApp.getUi();
   var resp = ui.alert(
     'Rigenerare il token?',
-    'I tag GTM configurati con il token attuale smetteranno di funzionare finché non aggiorni il campo "Token condiviso". Continuare?',
+    'I tag GTM configurati con il token attuale smetteranno di funzionare ' +
+      'finché non aggiorni il campo "Token condiviso" con il nuovo valore. Continuare?',
     ui.ButtonSet.YES_NO
   );
   if (resp !== ui.Button.YES) return;
@@ -348,11 +355,14 @@ function doGet(e) {
 function doPost(e) {
   var params = {};
   for (var k in e.parameter) params[k] = e.parameter[k];
+
   if (e.postData && e.postData.type && e.postData.type.indexOf('json') !== -1) {
     try {
       var body = JSON.parse(e.postData.contents);
       for (var bk in body) params[bk] = body[bk];
-    } catch (err) {}
+    } catch (err) {
+      // body non JSON: si prosegue comunque con e.parameter
+    }
   }
   return handleRequest_(params);
 }
@@ -370,27 +380,39 @@ function handleRequest_(p) {
   }
 
   try {
-    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var ss = SpreadsheetApp.getActiveSpreadsheet(); // sempre e solo questo foglio
     var sheetName = p.sheet || ss.getSheets()[0].getName();
     var sheet = ss.getSheetByName(sheetName);
-    if (!sheet) return jsonOutput_({ ok: false, error: 'sheet_not_found: ' + sheetName });
+    if (!sheet) {
+      return jsonOutput_({ ok: false, error: 'sheet_not_found: ' + sheetName });
+    }
 
+    // Parametri riservati, mai trattati come nomi di colonna
     var reserved = { sheet: 1, token: 1, _order: 1 };
+
+    // Ordine dichiarato dal tag (preserva l'ordine impostato nella tabella del tag)
     var declared = String(p._order || '').split('|').filter(function (c) { return c; });
+
+    // Eventuali parametri extra non dichiarati, aggiunti in coda
     var extras = Object.keys(p).filter(function (k) {
       return !reserved[k] && declared.indexOf(k) === -1;
     });
     var incoming = declared.concat(extras);
 
+    // Intestazione attuale del foglio (trim difensivo: uno spazio in coda
+    // digitato per errore in un'intestazione farebbe fallire il confronto
+    // con i nomi di colonna dichiarati e ne creerebbe una duplicata)
     var lastCol = sheet.getLastColumn();
     var headers = lastCol > 0
       ? sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(function (h) { return String(h).trim(); })
       : [];
 
     if (headers.length === 0 || headers.join('') === '') {
+      // Foglio vuoto: crea l'intestazione la prima volta
       headers = ['timestamp'].concat(incoming);
       sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
     } else {
+      // Aggiunge in coda le colonne mai viste prima, senza toccare quelle esistenti
       var missing = incoming.filter(function (c) { return headers.indexOf(c) === -1; });
       if (missing.length) {
         sheet.getRange(1, headers.length + 1, 1, missing.length).setValues([missing]);
@@ -398,6 +420,9 @@ function handleRequest_(p) {
       }
     }
 
+    // Costruisce la riga allineata all'intestazione (non all'ordine di arrivo),
+    // neutralizzando i valori che appendRow tratterebbe come formula
+    // (vedi sanitizeForSheet_ più sotto).
     var row = headers.map(function (h) {
       if (h === 'timestamp') return new Date();
       return sanitizeForSheet_(p[h] !== undefined ? p[h] : '');
@@ -412,21 +437,169 @@ function handleRequest_(p) {
   }
 }
 
-// appendRow/setValues interpretano le stringhe come farebbe l'interfaccia
-// se digitate a mano: un valore che inizia per "=" diventa una FORMULA
-// eseguita quando qualcuno apre il foglio (es. IMPORTXML per esfiltrare
-// dati, HYPERLINK per phishing) — rischio reale, l'endpoint è pubblico.
-// Un apostrofo (') iniziale forza il testo letterale, come premere ' prima
-// di digitare in cella. Compromesso: prefissando anche "+ - @" (blacklist
-// OWASP standard, non solo "="), un numero negativo legittimo come "-5"
-// diventa testo invece che numero; se ti serve il contrario, lascia solo "=".
+// appendRow/setValues interpretano le stringhe esattamente come farebbe
+// l'interfaccia se digitate a mano: un valore che inizia per "=" diventa
+// una FORMULA eseguita quando qualcuno apre il foglio (es. per esfiltrare
+// dati con IMPORTXML o per phishing con HYPERLINK) — un rischio reale,
+// non teorico, perché arriva da un endpoint pubblico. Un apostrofo (')
+// iniziale forza il valore a testo letterale, esattamente come se
+// premessi ' prima di digitare in una cella: viene tolto dalla
+// visualizzazione, il contenuto resta quello originale.
+// Compromesso consapevole: prefissando anche "+", "-", "@" (blacklist
+// standard OWASP contro l'injection nei fogli di calcolo, non solo "="),
+// un valore numerico negativo legittimo (es. "-5") diventa testo invece
+// che numero. Se ti serve che i numeri negativi restino numerici, togli
+// "+-@" da questa regex e lascia solo "=".
 function sanitizeForSheet_(v) {
   if (typeof v !== 'string') return v;
   return /^[=+\-@]/.test(v) ? "'" + v : v;
 }
 
+// ARCHIVIAZIONE RIGHE VECCHIE — opzionale, non necessaria perché i tag
+// funzionino. Sposta le righe con "timestamp" più vecchio di N giorni dal
+// tab principale a un tab "<Foglio> - Archivio" (creato al bisogno, con
+// la stessa intestazione), così il tab principale non cresce all'infinito
+// e resta scattante. Si applica a ogni tab di questo file che abbia una
+// colonna "timestamp" in intestazione (cioè ogni tab scritto da questo
+// script, con qualunque tag/deployment) — i tab "* - Archivio" stessi
+// sono sempre esclusi, per non ri-archiviare l'archivio.
+
+function getArchiveAfterDays_() {
+  var days = parseInt(PropertiesService.getScriptProperties().getProperty('ARCHIVE_AFTER_DAYS'), 10);
+  return (!isNaN(days) && days > 0) ? days : 90;
+}
+
+function setArchiveAfterDays() {
+  var ui = SpreadsheetApp.getUi();
+  var resp = ui.prompt(
+    'Dopo quanti giorni archiviare',
+    'Le righe più vecchie di questo numero di giorni verranno spostate in un tab ' +
+      '"<Foglio> - Archivio" quando esegui "Archivia ora" o al passaggio del trigger ' +
+      'automatico.\n\nValore attuale: ' + getArchiveAfterDays_() + ' giorni.',
+    ui.ButtonSet.OK_CANCEL
+  );
+  if (resp.getSelectedButton() !== ui.Button.OK) return;
+
+  var days = parseInt(resp.getResponseText().trim(), 10);
+  if (isNaN(days) || days <= 0) {
+    ui.alert('Inserisci un numero di giorni intero maggiore di zero.');
+    return;
+  }
+  PropertiesService.getScriptProperties().setProperty('ARCHIVE_AFTER_DAYS', String(days));
+  ui.alert('Impostato: le righe più vecchie di ' + days + ' giorni verranno archiviate.');
+}
+
+function archiveOldRowsNow() {
+  SpreadsheetApp.getUi().alert('Archiviazione righe vecchie', archiveOldRows_().summary, SpreadsheetApp.getUi().ButtonSet.OK);
+}
+
+// Eseguita anche dal trigger automatico: niente SpreadsheetApp.getUi() qui
+// dentro, perché un trigger headless non ha un'interfaccia a cui agganciarsi.
+function archiveOldRows_() {
+  var lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(30000);
+  } catch (err) {
+    return { count: 0, summary: 'Archiviazione rimandata: un\'altra operazione stava scrivendo sul foglio.' };
+  }
+
+  try {
+    var days = getArchiveAfterDays_();
+    var cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var archived = 0;
+    var touched = [];
+
+    ss.getSheets().forEach(function (sheet) {
+      var name = sheet.getName();
+      if (/ - Archivio$/.test(name)) return; // mai ri-archiviare un tab di archivio
+
+      var lastRow = sheet.getLastRow();
+      var lastCol = sheet.getLastColumn();
+      if (lastRow < 2 || lastCol < 1) return; // nessuna riga di dati oltre l'intestazione
+
+      var headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(function (h) { return String(h).trim(); });
+      var tsCol = headers.indexOf('timestamp');
+      if (tsCol === -1) return; // non è un tab scritto da questo script
+
+      var data = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
+      var oldRows = [];
+      var rowsToDelete = []; // numeri di riga 1-based nel foglio sorgente
+
+      for (var i = 0; i < data.length; i++) {
+        var ts = data[i][tsCol];
+        if (ts instanceof Date && ts < cutoff) {
+          oldRows.push(data[i]);
+          rowsToDelete.push(i + 2); // riga 1 = intestazione
+        }
+      }
+      if (!oldRows.length) return;
+
+      var archiveName = name + ' - Archivio';
+      var archiveSheet = ss.getSheetByName(archiveName);
+      if (!archiveSheet) {
+        archiveSheet = ss.insertSheet(archiveName);
+        archiveSheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+      }
+      archiveSheet.getRange(archiveSheet.getLastRow() + 1, 1, oldRows.length, headers.length).setValues(oldRows);
+
+      // Elimina dal basso verso l'alto: altrimenti cancellare una riga
+      // sposterebbe gli indici di quelle successive già raccolte in rowsToDelete.
+      for (var j = rowsToDelete.length - 1; j >= 0; j--) {
+        sheet.deleteRow(rowsToDelete[j]);
+      }
+
+      archived += oldRows.length;
+      touched.push(name + ' (' + oldRows.length + ')');
+    });
+
+    return {
+      count: archived,
+      summary: archived
+        ? 'Archiviate ' + archived + ' righe più vecchie di ' + days + ' giorni: ' + touched.join(', ')
+        : 'Nessuna riga più vecchia di ' + days + ' giorni da archiviare.'
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function enableAutoArchiving() {
+  var ui = SpreadsheetApp.getUi();
+  var already = ScriptApp.getProjectTriggers().some(function (t) {
+    return t.getHandlerFunction() === 'archiveOldRowsTrigger_';
+  });
+  if (already) {
+    ui.alert('L\'archiviazione automatica mensile è già attiva.');
+    return;
+  }
+  ScriptApp.newTrigger('archiveOldRowsTrigger_').timeBased().onMonthDay(1).atHour(3).create();
+  ui.alert(
+    'Archiviazione automatica attivata: verrà eseguita il giorno 1 di ogni mese, verso le 3 di notte. ' +
+      'Se richiesto, autorizza il nuovo permesso di gestione dei trigger (Google mostra il consenso solo la prima volta).'
+  );
+}
+
+function disableAutoArchiving() {
+  var ui = SpreadsheetApp.getUi();
+  var removed = 0;
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === 'archiveOldRowsTrigger_') {
+      ScriptApp.deleteTrigger(t);
+      removed++;
+    }
+  });
+  ui.alert(removed ? 'Archiviazione automatica disattivata.' : 'Non era attiva alcuna archiviazione automatica.');
+}
+
+function archiveOldRowsTrigger_() {
+  archiveOldRows_();
+}
+
 function jsonOutput_(obj) {
-  return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
+  return ContentService
+    .createTextOutput(JSON.stringify(obj))
+    .setMimeType(ContentService.MimeType.JSON);
 }
 ```
 

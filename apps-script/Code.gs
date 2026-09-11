@@ -19,6 +19,10 @@
  *   (usato dal tag server-side con sendHttpRequest).
  * - Neutralizza i valori che inizierebbero per = + - @ (rischio di
  *   formula injection su Sheets, vedi sanitizeForSheet_ più sotto).
+ * - Archiviazione opzionale delle righe più vecchie di N giorni in un tab
+ *   "<Foglio> - Archivio" (menu "Archiviazione righe vecchie"), a mano o
+ *   con un trigger automatico mensile, per non far crescere all'infinito
+ *   il tab principale.
  *
  * CONFIGURAZIONE PER I TAG GTM — come vederla:
  * Apri il foglio Google normalmente: dopo aver salvato questo script
@@ -39,11 +43,17 @@
  */
 
 function onOpen() {
-  SpreadsheetApp.getUi()
-    .createMenu('Sheets Logger (GTM)')
+  var ui = SpreadsheetApp.getUi();
+  ui.createMenu('Sheets Logger (GTM)')
     .addItem('Mostra configurazione (URL, foglio, token)', 'showConfig')
     .addItem('Imposta URL Web App', 'setWebAppUrl')
     .addItem('Rigenera token', 'regenerateSecret')
+    .addSeparator()
+    .addSubMenu(ui.createMenu('Archiviazione righe vecchie')
+      .addItem('Archivia ora', 'archiveOldRowsNow')
+      .addItem('Imposta giorni di conservazione', 'setArchiveAfterDays')
+      .addItem('Attiva archiviazione automatica mensile', 'enableAutoArchiving')
+      .addItem('Disattiva archiviazione automatica', 'disableAutoArchiving'))
     .addToUi();
 }
 
@@ -262,6 +272,147 @@ function handleRequest_(p) {
 function sanitizeForSheet_(v) {
   if (typeof v !== 'string') return v;
   return /^[=+\-@]/.test(v) ? "'" + v : v;
+}
+
+// ARCHIVIAZIONE RIGHE VECCHIE — opzionale, non necessaria perché i tag
+// funzionino. Sposta le righe con "timestamp" più vecchio di N giorni dal
+// tab principale a un tab "<Foglio> - Archivio" (creato al bisogno, con
+// la stessa intestazione), così il tab principale non cresce all'infinito
+// e resta scattante. Si applica a ogni tab di questo file che abbia una
+// colonna "timestamp" in intestazione (cioè ogni tab scritto da questo
+// script, con qualunque tag/deployment) — i tab "* - Archivio" stessi
+// sono sempre esclusi, per non ri-archiviare l'archivio.
+
+function getArchiveAfterDays_() {
+  var days = parseInt(PropertiesService.getScriptProperties().getProperty('ARCHIVE_AFTER_DAYS'), 10);
+  return (!isNaN(days) && days > 0) ? days : 90;
+}
+
+function setArchiveAfterDays() {
+  var ui = SpreadsheetApp.getUi();
+  var resp = ui.prompt(
+    'Dopo quanti giorni archiviare',
+    'Le righe più vecchie di questo numero di giorni verranno spostate in un tab ' +
+      '"<Foglio> - Archivio" quando esegui "Archivia ora" o al passaggio del trigger ' +
+      'automatico.\n\nValore attuale: ' + getArchiveAfterDays_() + ' giorni.',
+    ui.ButtonSet.OK_CANCEL
+  );
+  if (resp.getSelectedButton() !== ui.Button.OK) return;
+
+  var days = parseInt(resp.getResponseText().trim(), 10);
+  if (isNaN(days) || days <= 0) {
+    ui.alert('Inserisci un numero di giorni intero maggiore di zero.');
+    return;
+  }
+  PropertiesService.getScriptProperties().setProperty('ARCHIVE_AFTER_DAYS', String(days));
+  ui.alert('Impostato: le righe più vecchie di ' + days + ' giorni verranno archiviate.');
+}
+
+function archiveOldRowsNow() {
+  SpreadsheetApp.getUi().alert('Archiviazione righe vecchie', archiveOldRows_().summary, SpreadsheetApp.getUi().ButtonSet.OK);
+}
+
+// Eseguita anche dal trigger automatico: niente SpreadsheetApp.getUi() qui
+// dentro, perché un trigger headless non ha un'interfaccia a cui agganciarsi.
+function archiveOldRows_() {
+  var lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(30000);
+  } catch (err) {
+    return { count: 0, summary: 'Archiviazione rimandata: un\'altra operazione stava scrivendo sul foglio.' };
+  }
+
+  try {
+    var days = getArchiveAfterDays_();
+    var cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var archived = 0;
+    var touched = [];
+
+    ss.getSheets().forEach(function (sheet) {
+      var name = sheet.getName();
+      if (/ - Archivio$/.test(name)) return; // mai ri-archiviare un tab di archivio
+
+      var lastRow = sheet.getLastRow();
+      var lastCol = sheet.getLastColumn();
+      if (lastRow < 2 || lastCol < 1) return; // nessuna riga di dati oltre l'intestazione
+
+      var headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(function (h) { return String(h).trim(); });
+      var tsCol = headers.indexOf('timestamp');
+      if (tsCol === -1) return; // non è un tab scritto da questo script
+
+      var data = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
+      var oldRows = [];
+      var rowsToDelete = []; // numeri di riga 1-based nel foglio sorgente
+
+      for (var i = 0; i < data.length; i++) {
+        var ts = data[i][tsCol];
+        if (ts instanceof Date && ts < cutoff) {
+          oldRows.push(data[i]);
+          rowsToDelete.push(i + 2); // riga 1 = intestazione
+        }
+      }
+      if (!oldRows.length) return;
+
+      var archiveName = name + ' - Archivio';
+      var archiveSheet = ss.getSheetByName(archiveName);
+      if (!archiveSheet) {
+        archiveSheet = ss.insertSheet(archiveName);
+        archiveSheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+      }
+      archiveSheet.getRange(archiveSheet.getLastRow() + 1, 1, oldRows.length, headers.length).setValues(oldRows);
+
+      // Elimina dal basso verso l'alto: altrimenti cancellare una riga
+      // sposterebbe gli indici di quelle successive già raccolte in rowsToDelete.
+      for (var j = rowsToDelete.length - 1; j >= 0; j--) {
+        sheet.deleteRow(rowsToDelete[j]);
+      }
+
+      archived += oldRows.length;
+      touched.push(name + ' (' + oldRows.length + ')');
+    });
+
+    return {
+      count: archived,
+      summary: archived
+        ? 'Archiviate ' + archived + ' righe più vecchie di ' + days + ' giorni: ' + touched.join(', ')
+        : 'Nessuna riga più vecchia di ' + days + ' giorni da archiviare.'
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function enableAutoArchiving() {
+  var ui = SpreadsheetApp.getUi();
+  var already = ScriptApp.getProjectTriggers().some(function (t) {
+    return t.getHandlerFunction() === 'archiveOldRowsTrigger_';
+  });
+  if (already) {
+    ui.alert('L\'archiviazione automatica mensile è già attiva.');
+    return;
+  }
+  ScriptApp.newTrigger('archiveOldRowsTrigger_').timeBased().onMonthDay(1).atHour(3).create();
+  ui.alert(
+    'Archiviazione automatica attivata: verrà eseguita il giorno 1 di ogni mese, verso le 3 di notte. ' +
+      'Se richiesto, autorizza il nuovo permesso di gestione dei trigger (Google mostra il consenso solo la prima volta).'
+  );
+}
+
+function disableAutoArchiving() {
+  var ui = SpreadsheetApp.getUi();
+  var removed = 0;
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === 'archiveOldRowsTrigger_') {
+      ScriptApp.deleteTrigger(t);
+      removed++;
+    }
+  });
+  ui.alert(removed ? 'Archiviazione automatica disattivata.' : 'Non era attiva alcuna archiviazione automatica.');
+}
+
+function archiveOldRowsTrigger_() {
+  archiveOldRows_();
 }
 
 function jsonOutput_(obj) {

@@ -127,6 +127,39 @@ il dettaglio di come farlo resta documentato in
 insieme ad altre opzioni (trucco Google Form, servizi terzi come Sheety/
 SheetDB), per riferimento se dovesse servire.
 
+## Manutenzione — archiviazione righe vecchie
+
+`Code.gs` include un'archiviazione opzionale (menu **Sheets Logger (GTM)**
+→ **Archiviazione righe vecchie**): sposta le righe con `timestamp` più
+vecchio di N giorni (default 90, configurabile) in un tab
+`<Foglio> - Archivio`, così i tab principali non crescono all'infinito.
+Si applica a ogni tab del file che abbia una colonna `timestamp` in
+intestazione — cioè ogni tab scritto da questo script, indipendentemente
+da quale tag/deployment lo abbia popolato.
+
+- **Archivia ora** → esegue subito, una tantum.
+- **Imposta giorni di conservazione** → cambia la soglia (default 90 giorni).
+- **Attiva/disattiva archiviazione automatica mensile** → crea/rimuove un
+  trigger che esegue l'archiviazione il giorno 1 di ogni mese, verso le 3
+  di notte. La prima attivazione può chiedere di autorizzare il nuovo
+  permesso di gestione dei trigger: è normale, Google lo richiede una
+  volta sola.
+
+Non è necessaria perché i tag funzionino: è pulizia di manutenzione,
+saltabile se il volume di righe resta basso.
+
+## Migliorie valutate e scartate (per riferimento futuro)
+
+- **Rate limiting** sull'endpoint (un tetto di richieste/minuto via
+  `CacheService`, per limitare il danno di un token trapelato): scartato
+  su richiesta, nessun limite implementato oggi.
+- **Log dei tentativi con token sbagliato** (per accorgersi di un token
+  trapelato o di un tentativo di indovinarlo): scartato su richiesta,
+  nessun log implementato oggi.
+
+Se in futuro servissero, sono entrambi aggiungibili senza toccare i tag
+GTM — vivrebbero interamente in `apps-script/Code.gs`.
+
 ## Limiti da conoscere
 
 **Apps Script** (vale per entrambi i tag, dato che condividono lo stesso
