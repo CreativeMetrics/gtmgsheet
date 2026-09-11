@@ -23,10 +23,14 @@
  * comparirà un menu "Sheets Logger (GTM)" nella barra del foglio con le
  * voci "Mostra configurazione", "Imposta URL Web App" e "Rigenera token".
  * "Mostra configurazione" riassume in un solo popup i tre valori da
- * incollare nei tag GTM (client e/o server): URL del Web App (rilevato
- * automaticamente quando possibile, con "Imposta URL Web App" come
- * ripiego manuale se la rilevazione fallisce o è sbagliata), nome del
- * foglio (tab) e token condiviso. Token e URL manuale vivono in
+ * incollare nei tag GTM (client e/o server): URL del Web App, nome del
+ * foglio (tab) e token condiviso. L'URL va SEMPRE impostato a mano con
+ * "Imposta URL Web App" copiandolo da Deploy > Gestisci deployment: NON
+ * viene mai preso in automatico da ScriptApp.getService().getUrl(), che
+ * su account Google Workspace può restituire un URL nel formato
+ * .../a/TUODOMINIO/macros/s/.../exec — un endpoint diverso, con un
+ * deployment ID diverso da quello del deployment pubblico reale, non
+ * utilizzabile da un chiamante esterno come GTM. Token e URL vivono in
  * PropertiesService (Proprietà dello script), non nel testo del codice:
  * non finiscono per errore in un file condiviso, in un export del
  * container o in questo stesso repository.
@@ -51,30 +55,26 @@ function getSecret_() {
   return secret;
 }
 
-// Un valore impostato a mano vince sempre su quello rilevato in automatico
-// (così un redeploy che rompesse la rilevazione automatica non cambia
-// nulla se hai già fissato l'URL manualmente). Se non c'è nulla di
-// salvato, si tenta ScriptApp.getService().getUrl(): funziona nella
-// maggior parte dei casi, ma ha bug noti e mai risolti da Google (a volte
-// restituisce l'URL /dev invece di /exec, o un deployment ID non più
-// valido dopo certi redeploy) — per questo il risultato viene validato
-// (deve contenere "/exec") prima di essere usato, e non viene mai salvato
-// automaticamente: resta un tentativo rifatto ad ogni apertura del menu,
-// finché non lo fissi tu con "Imposta URL Web App".
+// L'unico URL usato davvero (dal popup di configurazione, e quindi dai
+// tag) è quello impostato a mano. ScriptApp.getService().getUrl() NON
+// viene usato come valore autoritativo: ha bug noti e mai risolti da
+// Google, e su account Google Workspace può restituire un URL nel
+// formato .../a/TUODOMINIO/macros/s/.../exec che ha un deployment ID
+// diverso da quello del deployment pubblico — non un problema di
+// formato rilevabile con un controllo automatico, ma un ID sbagliato che
+// sembra valido. Per questo è mostrato solo come suggerimento diagnostico
+// in "Mostra configurazione", con l'avviso esplicito di verificarlo
+// sempre confrontandolo con Deploy > Gestisci deployment prima di usarlo.
 function getWebAppUrl_() {
-  var stored = PropertiesService.getScriptProperties().getProperty('WEBAPP_URL');
-  if (stored) return { url: stored, source: 'manuale' };
+  return PropertiesService.getScriptProperties().getProperty('WEBAPP_URL') || '';
+}
 
-  var auto = '';
+function getAutoDetectedUrlHint_() {
   try {
-    auto = ScriptApp.getService().getUrl() || '';
+    return ScriptApp.getService().getUrl() || '';
   } catch (err) {
-    auto = '';
+    return '';
   }
-  if (auto && auto.indexOf('/exec') !== -1) {
-    return { url: auto, source: 'rilevato automaticamente' };
-  }
-  return { url: '', source: null };
 }
 
 function setWebAppUrl() {
@@ -83,18 +83,17 @@ function setWebAppUrl() {
   var current = props.getProperty('WEBAPP_URL') || '';
   var resp = ui.prompt(
     'URL del Web App',
-    'Da usare solo se "Mostra configurazione" non rileva l\'URL da solo, o lo rileva ' +
-      'sbagliato (es. finisce in /dev invece di /exec). Incolla l\'URL che termina in ' +
-      '/exec, copiato da Deploy > Gestisci deployment dopo aver pubblicato questo ' +
-      'script come App web. Lascia vuoto e conferma per tornare alla rilevazione automatica.' +
-      (current ? '\n\nValore manuale attuale: ' + current : ''),
+    'Incolla l\'URL che termina in /exec, copiato da Deploy > Gestisci deployment ' +
+      'dopo aver pubblicato questo script come App web. Non fidarti di un URL trovato ' +
+      'altrove (es. rilevato in automatico): copialo sempre da quella schermata.' +
+      (current ? '\n\nValore attuale: ' + current : ''),
     ui.ButtonSet.OK_CANCEL
   );
   if (resp.getSelectedButton() !== ui.Button.OK) return;
 
   var url = resp.getResponseText().trim();
   if (url && (url.indexOf('https://script.google.com/macros/s/') !== 0 || url.indexOf('/exec') === -1)) {
-    ui.alert('URL non valido: deve iniziare con https://script.google.com/macros/s/ e terminare in /exec.');
+    ui.alert('URL non valido: deve iniziare con https://script.google.com/macros/s/ e terminare in /exec (non .../a/tuodominio/macros/s/...).');
     return;
   }
   if (url) {
@@ -107,17 +106,25 @@ function setWebAppUrl() {
 
 function showConfig() {
   var ui = SpreadsheetApp.getUi();
-  var webApp = getWebAppUrl_();
+  var url = getWebAppUrl_();
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var activeName = ss.getActiveSheet().getName();
   var otherNames = ss.getSheets()
     .map(function (s) { return s.getName(); })
     .filter(function (n) { return n !== activeName; });
 
-  var urlLine = webApp.url
-    ? webApp.url + '  (' + webApp.source + ')'
-    : '(non rilevato — pubblica il Web App con Deploy, poi riapri questo menu; ' +
-      'se resta vuoto usa "Imposta URL Web App" per incollarlo a mano)';
+  var urlLine;
+  if (url) {
+    urlLine = url;
+  } else {
+    var hint = getAutoDetectedUrlHint_();
+    urlLine = '(non impostato — usa "Imposta URL Web App" e incolla l\'URL da Deploy > Gestisci deployment)';
+    if (hint) {
+      urlLine += '\nValore intercettato automaticamente, NON VERIFICATO (spesso sbagliato, in particolare su ' +
+        'account Google Workspace: può avere un deployment ID diverso da quello reale) — non usarlo senza ' +
+        'averlo prima confrontato con Deploy > Gestisci deployment: ' + hint;
+    }
+  }
 
   var lines = [
     'Apps Script Web App URL:',

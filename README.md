@@ -48,21 +48,23 @@ docs/
 2. Incolla il contenuto di `apps-script/Code.gs` (nessuna costante da
    modificare: token e URL si gestiscono dal menu, vedi sotto).
 3. Deploy → Nuovo deployment → App web → Esegui come "Me" → Accesso
-   "Chiunque".
+   "Chiunque". Copia l'URL `/exec` mostrato a fine deploy.
 4. Ricarica la pagina del foglio: comparirà il menu **Sheets Logger
    (GTM)**.
+   - **Imposta URL Web App** → incolla l'URL copiato al punto 3. **Non
+     usare un URL rilevato in automatico**: `ScriptApp.getService().getUrl()`,
+     su account Google Workspace, può restituire un URL nel formato
+     `.../a/TUODOMINIO/macros/s/.../exec` con un **deployment ID diverso**
+     da quello reale — un URL che sembra valido (contiene `/exec`) ma
+     punta a un deployment sbagliato. L'unico URL affidabile è quello
+     copiato dalla schermata Deploy → Gestisci deployment.
    - **Mostra configurazione** → un unico popup con i tre valori pronti
-     da incollare nei tag: **URL del Web App** (rilevato in automatico
-     nella maggior parte dei casi via `ScriptApp.getService().getUrl()`),
-     **nome del foglio (tab)** attivo (con l'elenco degli altri fogli, se
-     il file ne ha più di uno) e **token condiviso** (generato al primo
-     utilizzo, mai da inventare a mano).
-   - **Imposta URL Web App** → solo se la rilevazione automatica manca o
-     è sbagliata (bug noto di quell'API: a volte restituisce `/dev`
-     invece di `/exec`, o un ID non più valido dopo un redeploy): incolla
-     qui l'URL corretto, copiato da Deploy → Gestisci deployment. Un
-     valore impostato così vince sempre su quello rilevato in automatico;
-     lascialo vuoto per tornare alla rilevazione automatica.
+     da incollare nei tag: **URL del Web App** (quello appena impostato;
+     se non l'hai ancora fatto, il popup può mostrare comunque un valore
+     "intercettato automaticamente" a puro scopo diagnostico, etichettato
+     come non verificato), **nome del foglio (tab)** attivo (con l'elenco
+     degli altri fogli, se il file ne ha più di uno) e **token condiviso**
+     (generato al primo utilizzo, mai da inventare a mano).
 
 Il codice è duplicato anche nella sezione Documentazione di
 `google-sheets-logger.tpl` (`___NOTES___`), così resta visibile
