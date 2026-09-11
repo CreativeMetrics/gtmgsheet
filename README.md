@@ -130,11 +130,40 @@ SheetDB), per riferimento se dovesse servire.
 ## Nomi di colonna riservati
 
 Nella tabella "Dati da scrivere" di entrambi i tag, non usare `sheet`,
-`token`, `_order` o `ping` come "Nome colonna": sono gli stessi nomi usati
-dal protocollo tra il tag e Apps Script per il nome del foglio, il token,
-l'ordine delle colonne e l'health-check. Se una colonna li usa, viene
-scartata con un avviso in console invece di scrivere un dato ambiguo o
-di rompere silenziosamente l'autenticazione.
+`token`, `_order`, `ping` o `_dedupe` come "Nome colonna": sono gli stessi
+nomi usati dal protocollo tra il tag e Apps Script per il nome del foglio,
+il token, l'ordine delle colonne, l'health-check e la deduplicazione. Se
+una colonna li usa, viene scartata con un avviso in console invece di
+scrivere un dato ambiguo o di rompere silenziosamente l'autenticazione.
+
+## Deduplicazione eventi (opzionale)
+
+Entrambi i tag hanno un campo facoltativo **"Chiave di deduplicazione"**
+(vuoto di default, nessun cambiamento di comportamento). Se lo valorizzi
+con una variabile stabile per lo stesso evento logico (es. un Event ID
+che non cambia se il tag/evento viene rieseguito per un retry), `Code.gs`
+scarta in silenzio una seconda richiesta con la stessa chiave arrivata
+entro una finestra configurabile (menu **Sheets Logger (GTM)** → **Imposta
+finestra di deduplicazione eventi**, default 5 minuti, max 6 ore — limite
+di `CacheService`), rispondendo `{"ok":true,"duplicate":true}` senza
+scrivere una riga.
+
+Usa `CacheService`, non crittografia: risolve i doppioni accidentali
+(retry di rete, ri-consegna di un evento in una pipeline server-side), non
+è una difesa contro un attaccante — per quello serve il token. Il
+controllo avviene dentro lo stesso lock usato per le scritture, quindi è
+privo di corse critiche anche con richieste quasi simultanee.
+
+**Perché non una firma HMAC con timestamp** (opzione valutata in
+precedenza per rafforzare il token sul tag server-side): il sandbox GTM
+non offre alcuna primitiva HMAC, solo `sha256`/`sha256Sync` senza chiave.
+Costruire un HMAC a mano richiederebbe XOR byte-per-byte e hash annidati
+in un ambiente senza `Buffer`/TypedArray — crittografia scritta a mano,
+difficile da verificare, con un beneficio marginale nella pratica: chi
+fosse già in grado di intercettare le richieste tra container server e
+Apps Script avrebbe accesso più diretto al token (dalla configurazione
+del tag o dai log del container) di quanto gli servirebbe romperla. Non è
+stata implementata per questo.
 
 ## Verificare il deployment senza scrivere righe di prova
 

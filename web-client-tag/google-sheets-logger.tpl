@@ -59,6 +59,13 @@ ___TEMPLATE_PARAMETERS___
     "help": "Non inventarlo a mano: apri il foglio Google, menu \"Sheets Logger (GTM)\" → \"Mostra configurazione\" (il token è generato in automatico da Apps Script) e incollalo qui. L'endpoint /exec è pubblico: senza questo controllo chiunque legga il container GTM può scrivere nel foglio."
   },
   {
+    "type": "TEXT",
+    "name": "dedupeKey",
+    "displayName": "Chiave di deduplicazione (opzionale)",
+    "simpleValueType": true,
+    "help": "Una variabile che identifica in modo stabile lo stesso evento anche se il tag venisse rieseguito per un retry (es. un Event ID che non cambia a ogni tentativo). Se due richieste arrivano con la stessa chiave entro la finestra configurata in Apps Script (menu \"Imposta finestra di deduplicazione eventi\", default 5 minuti), la seconda viene ignorata senza scrivere una riga. Lascia vuoto per disattivare (nessuna deduplicazione, comportamento invariato)."
+  },
+  {
     "type": "SIMPLE_TABLE",
     "name": "rowData",
     "displayName": "Dati da scrivere (colonna → valore)",
@@ -76,7 +83,7 @@ ___TEMPLATE_PARAMETERS___
         "type": "TEXT"
       }
     ],
-    "help": "Ogni riga diventa una colonna nel foglio. Se la colonna non esiste ancora viene creata in coda automaticamente. Nomi riservati (non usarli come nome colonna, verrebbero scartati): sheet, token, _order, ping."
+    "help": "Ogni riga diventa una colonna nel foglio. Se la colonna non esiste ancora viene creata in coda automaticamente. Nomi riservati (non usarli come nome colonna, verrebbero scartati): sheet, token, _order, ping, _dedupe."
   },
   {
     "type": "CHECKBOX",
@@ -98,18 +105,18 @@ const sendPixel = require('sendPixel');
 const webAppUrl = data.webAppUrl;
 const sheetName = data.sheetName || '';
 const token = data.secretToken || '';
+const dedupeKey = data.dedupeKey || '';
 const rows = data.rowData || [];
 const log = data.enableLogging;
 
 // Nomi riservati dal protocollo con Apps Script: se una colonna della
-// tabella si chiamasse esattamente "sheet", "token", "_order" o "ping",
-// finirebbe duplicata nella query string insieme al parametro di
-// controllo con lo stesso nome, con esito indefinito lato Apps Script
-// (quale delle due vince dipende dall'ordine con cui vengono lette,
-// nel peggiore dei casi rompendo l'autenticazione). Si scarta quindi la
-// colonna con un avviso in console, invece di lasciare il comportamento
-// ambiguo.
-const reserved = { sheet: 1, token: 1, _order: 1, ping: 1 };
+// tabella si chiamasse esattamente uno di questi, finirebbe duplicata
+// nella query string insieme al parametro di controllo con lo stesso
+// nome, con esito indefinito lato Apps Script (quale delle due vince
+// dipende dall'ordine con cui vengono lette, nel peggiore dei casi
+// rompendo l'autenticazione). Si scarta quindi la colonna con un avviso
+// in console, invece di lasciare il comportamento ambiguo.
+const reserved = { sheet: 1, token: 1, _order: 1, ping: 1, _dedupe: 1 };
 
 let order = '';
 let qs = '';
@@ -118,7 +125,7 @@ for (let i = 0; i < rows.length; i++) {
   const name = makeString(rows[i].column1 || '');
   if (!name) continue;
   if (reserved[name]) {
-    logToConsole('Google Sheets Logger - colonna "' + name + '" ignorata: nome riservato (sheet/token/_order/ping).');
+    logToConsole('Google Sheets Logger - colonna "' + name + '" ignorata: nome riservato (sheet/token/_order/ping/_dedupe).');
     continue;
   }
 
@@ -134,6 +141,7 @@ for (let i = 0; i < rows.length; i++) {
 let url = webAppUrl + '?_order=' + encodeUriComponent(order) + qs;
 if (sheetName) url += '&sheet=' + encodeUriComponent(sheetName);
 if (token) url += '&token=' + encodeUriComponent(token);
+if (dedupeKey) url += '&_dedupe=' + encodeUriComponent(dedupeKey);
 
 if (log) {
   logToConsole('Google Sheets Logger - invio dati a: ' + url);
@@ -243,6 +251,7 @@ function onOpen() {
     .addItem('Mostra configurazione (URL, foglio, token)', 'showConfig')
     .addItem('Imposta URL Web App', 'setWebAppUrl')
     .addItem('Rigenera token', 'regenerateSecret')
+    .addItem('Imposta finestra di deduplicazione eventi', 'setDedupeWindowSeconds')
     .addSeparator()
     .addSubMenu(ui.createMenu('Archiviazione righe vecchie')
       .addItem('Archivia ora', 'archiveOldRowsNow')
@@ -402,6 +411,15 @@ function handleRequest_(p) {
   }
 
   try {
+    // Deduplica DENTRO il lock: se il controllo fosse prima di acquisirlo,
+    // due richieste quasi simultanee con la stessa chiave potrebbero
+    // superare entrambe il controllo prima che una delle due la registri.
+    // Qui invece solo un'esecuzione alla volta può leggere/scrivere la
+    // stessa chiave, quindi la deduplicazione è priva di questa corsa.
+    if (p._dedupe && isDuplicateEvent_(p._dedupe)) {
+      return jsonOutput_({ ok: true, duplicate: true });
+    }
+
     var ss = SpreadsheetApp.getActiveSpreadsheet(); // sempre e solo questo foglio
     var sheetName = p.sheet || ss.getSheets()[0].getName();
     var sheet = ss.getSheetByName(sheetName);
@@ -410,7 +428,7 @@ function handleRequest_(p) {
     }
 
     // Parametri riservati, mai trattati come nomi di colonna
-    var reserved = { sheet: 1, token: 1, _order: 1, ping: 1 };
+    var reserved = { sheet: 1, token: 1, _order: 1, ping: 1, _dedupe: 1 };
 
     // Ordine dichiarato dal tag (preserva l'ordine impostato nella tabella del tag)
     var declared = String(p._order || '').split('|').filter(function (c) { return c; });
@@ -481,6 +499,51 @@ function handleRequest_(p) {
 function sanitizeForSheet_(v) {
   if (typeof v !== 'string') return v;
   return /^[=+\-@]/.test(v) ? "'" + v : v;
+}
+
+// DEDUPLICA EVENTI — opzionale: attiva solo se il tag valorizza il campo
+// "Chiave di deduplicazione" con una variabile stabile per lo stesso
+// evento logico (es. un Event ID che non cambia se il tag/evento viene
+// rieseguito per un retry di rete). Se la stessa chiave arriva due volte
+// entro la finestra configurata, la seconda viene ignorata (risposta
+// {"ok":true,"duplicate":true}, nessuna riga scritta). Usa CacheService,
+// non crittografia: risolve i doppioni accidentali, non è una difesa
+// contro un attaccante deliberato (per quello serve il token, non questo).
+
+function getDedupeWindowSeconds_() {
+  var seconds = parseInt(PropertiesService.getScriptProperties().getProperty('DEDUPE_WINDOW_SECONDS'), 10);
+  // 21600 secondi (6 ore) è il TTL massimo consentito da CacheService.
+  return (!isNaN(seconds) && seconds > 0) ? Math.min(seconds, 21600) : 300;
+}
+
+function setDedupeWindowSeconds() {
+  var ui = SpreadsheetApp.getUi();
+  var resp = ui.prompt(
+    'Finestra di deduplicazione eventi',
+    'Se due richieste arrivano con la stessa "Chiave di deduplicazione" entro ' +
+      'questa finestra (in secondi, max 21600 = 6 ore), la seconda viene ignorata.' +
+      '\n\nValore attuale: ' + getDedupeWindowSeconds_() + ' secondi.',
+    ui.ButtonSet.OK_CANCEL
+  );
+  if (resp.getSelectedButton() !== ui.Button.OK) return;
+
+  var seconds = parseInt(resp.getResponseText().trim(), 10);
+  if (isNaN(seconds) || seconds <= 0) {
+    ui.alert('Inserisci un numero di secondi intero maggiore di zero.');
+    return;
+  }
+  PropertiesService.getScriptProperties().setProperty('DEDUPE_WINDOW_SECONDS', String(Math.min(seconds, 21600)));
+  ui.alert('Impostato: finestra di deduplicazione a ' + getDedupeWindowSeconds_() + ' secondi.');
+}
+
+// true se questa chiave è già stata vista entro la finestra configurata
+// (e la registra per la prossima volta); false alla prima occorrenza.
+function isDuplicateEvent_(key) {
+  var cache = CacheService.getScriptCache();
+  var cacheKey = 'dedupe_' + key;
+  if (cache.get(cacheKey)) return true;
+  cache.put(cacheKey, '1', getDedupeWindowSeconds_());
+  return false;
 }
 
 // ARCHIVIAZIONE RIGHE VECCHIE — opzionale, non necessaria perché i tag
@@ -629,6 +692,7 @@ function jsonOutput_(obj) {
     .createTextOutput(JSON.stringify(obj))
     .setMimeType(ContentService.MimeType.JSON);
 }
+```
 
 4. Deploy → Nuovo deployment → tipo **App web**.
    - Esegui come: **Me**.

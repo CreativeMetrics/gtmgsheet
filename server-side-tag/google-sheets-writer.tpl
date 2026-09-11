@@ -59,6 +59,13 @@ ___TEMPLATE_PARAMETERS___
     "help": "Non inventarlo a mano: apri il foglio Google, menu \"Sheets Logger (GTM)\" → \"Mostra configurazione\" (il token è generato in automatico da Apps Script, insieme a URL del Web App e nome del foglio) e incollalo qui. A differenza del tag client-side, qui il valore non transita mai verso il browser: resta nella configurazione del container server."
   },
   {
+    "type": "TEXT",
+    "name": "dedupeKey",
+    "displayName": "Chiave di deduplicazione (opzionale)",
+    "simpleValueType": true,
+    "help": "Una variabile di event data stabile per lo stesso evento anche in caso di ri-consegna (es. l'Event ID di GA4, se disponibile come variabile). Se due richieste arrivano con la stessa chiave entro la finestra configurata in Apps Script (menu \"Imposta finestra di deduplicazione eventi\", default 5 minuti), la seconda viene ignorata senza scrivere una riga. Particolarmente utile qui: una pipeline server-side può ri-consegnare lo stesso evento più di una volta. Lascia vuoto per disattivare (comportamento invariato)."
+  },
+  {
     "type": "SIMPLE_TABLE",
     "name": "rowData",
     "displayName": "Dati da scrivere (colonna → valore)",
@@ -76,7 +83,7 @@ ___TEMPLATE_PARAMETERS___
         "type": "TEXT"
       }
     ],
-    "help": "Ogni riga diventa una colonna nel foglio (creata in automatico se non esiste ancora, gestito dall'Apps Script). Qui puoi mappare direttamente variabili di event data, es. {{Event Name}}, {{Client ID}}. Nomi riservati (non usarli come nome colonna, verrebbero scartati): sheet, token, _order, ping."
+    "help": "Ogni riga diventa una colonna nel foglio (creata in automatico se non esiste ancora, gestito dall'Apps Script). Qui puoi mappare direttamente variabili di event data, es. {{Event Name}}, {{Client ID}}. Nomi riservati (non usarli come nome colonna, verrebbero scartati): sheet, token, _order, ping, _dedupe."
   },
   {
     "type": "CHECKBOX",
@@ -99,15 +106,16 @@ const sendHttpRequest = require('sendHttpRequest');
 const webAppUrl = data.webAppUrl;
 const sheetName = data.sheetName || '';
 const token = data.secretToken || '';
+const dedupeKey = data.dedupeKey || '';
 const rows = data.rowData || [];
 const debug = data.enableLogging;
 
 // Nomi riservati dal protocollo con Apps Script: una colonna chiamata
-// esattamente "sheet", "token", "_order" o "ping" verrebbe silenziosamente
-// sovrascritta più sotto dal valore di controllo con lo stesso nome
-// (payload.token = token, ecc.), perdendo il dato che intendevi scrivere.
-// Si scarta quindi la colonna con un log, invece di perderla in silenzio.
-const reserved = { sheet: 1, token: 1, _order: 1, ping: 1 };
+// esattamente uno di questi verrebbe silenziosamente sovrascritta più
+// sotto dal valore di controllo con lo stesso nome (payload.token = token,
+// ecc.), perdendo il dato che intendevi scrivere. Si scarta quindi la
+// colonna con un log, invece di perderla in silenzio.
+const reserved = { sheet: 1, token: 1, _order: 1, ping: 1, _dedupe: 1 };
 
 const payload = {};
 let order = '';
@@ -116,7 +124,7 @@ for (let i = 0; i < rows.length; i++) {
   const name = makeString(rows[i].column1 || '');
   if (!name) continue;
   if (reserved[name]) {
-    log('Google Sheets Writer - colonna "' + name + '" ignorata: nome riservato (sheet/token/_order/ping).');
+    log('Google Sheets Writer - colonna "' + name + '" ignorata: nome riservato (sheet/token/_order/ping/_dedupe).');
     continue;
   }
 
@@ -131,6 +139,7 @@ for (let i = 0; i < rows.length; i++) {
 payload._order = order;
 if (sheetName) payload.sheet = sheetName;
 if (token) payload.token = token;
+if (dedupeKey) payload._dedupe = dedupeKey;
 
 const body = JSON.stringify(payload);
 

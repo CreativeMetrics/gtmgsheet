@@ -25,10 +25,16 @@
  *   il tab principale.
  * - Health-check: "?token=...&ping=1" risponde senza scrivere righe, utile
  *   per verificare deployment e token da browser durante il setup.
- * - "sheet", "token", "_order", "ping" sono nomi di colonna riservati: se
- *   la tabella del tag ne usa uno, il template GTM lo scarta con un log
- *   invece di lasciare un comportamento ambiguo o una perdita silenziosa
- *   del dato (vedi i commenti nei template .tpl).
+ * - "sheet", "token", "_order", "ping", "_dedupe" sono nomi di colonna
+ *   riservati: se la tabella del tag ne usa uno, il template GTM lo scarta
+ *   con un log invece di lasciare un comportamento ambiguo o una perdita
+ *   silenziosa del dato (vedi i commenti nei template .tpl).
+ * - Deduplicazione opzionale per ID evento (campo "Chiave di
+ *   deduplicazione" nel tag, vuoto di default): se la stessa chiave arriva
+ *   due volte entro una finestra configurabile (default 5 minuti), la
+ *   seconda richiesta viene ignorata senza scrivere una riga duplicata.
+ *   Usa CacheService, non crittografia — pensata per i doppioni
+ *   accidentali (retry di rete), non come difesa da un attaccante.
  *
  * CONFIGURAZIONE PER I TAG GTM — come vederla:
  * Apri il foglio Google normalmente: dopo aver salvato questo script
@@ -54,6 +60,7 @@ function onOpen() {
     .addItem('Mostra configurazione (URL, foglio, token)', 'showConfig')
     .addItem('Imposta URL Web App', 'setWebAppUrl')
     .addItem('Rigenera token', 'regenerateSecret')
+    .addItem('Imposta finestra di deduplicazione eventi', 'setDedupeWindowSeconds')
     .addSeparator()
     .addSubMenu(ui.createMenu('Archiviazione righe vecchie')
       .addItem('Archivia ora', 'archiveOldRowsNow')
@@ -213,6 +220,15 @@ function handleRequest_(p) {
   }
 
   try {
+    // Deduplica DENTRO il lock: se il controllo fosse prima di acquisirlo,
+    // due richieste quasi simultanee con la stessa chiave potrebbero
+    // superare entrambe il controllo prima che una delle due la registri.
+    // Qui invece solo un'esecuzione alla volta può leggere/scrivere la
+    // stessa chiave, quindi la deduplicazione è priva di questa corsa.
+    if (p._dedupe && isDuplicateEvent_(p._dedupe)) {
+      return jsonOutput_({ ok: true, duplicate: true });
+    }
+
     var ss = SpreadsheetApp.getActiveSpreadsheet(); // sempre e solo questo foglio
     var sheetName = p.sheet || ss.getSheets()[0].getName();
     var sheet = ss.getSheetByName(sheetName);
@@ -221,7 +237,7 @@ function handleRequest_(p) {
     }
 
     // Parametri riservati, mai trattati come nomi di colonna
-    var reserved = { sheet: 1, token: 1, _order: 1, ping: 1 };
+    var reserved = { sheet: 1, token: 1, _order: 1, ping: 1, _dedupe: 1 };
 
     // Ordine dichiarato dal tag (preserva l'ordine impostato nella tabella del tag)
     var declared = String(p._order || '').split('|').filter(function (c) { return c; });
@@ -292,6 +308,51 @@ function handleRequest_(p) {
 function sanitizeForSheet_(v) {
   if (typeof v !== 'string') return v;
   return /^[=+\-@]/.test(v) ? "'" + v : v;
+}
+
+// DEDUPLICA EVENTI — opzionale: attiva solo se il tag valorizza il campo
+// "Chiave di deduplicazione" con una variabile stabile per lo stesso
+// evento logico (es. un Event ID che non cambia se il tag/evento viene
+// rieseguito per un retry di rete). Se la stessa chiave arriva due volte
+// entro la finestra configurata, la seconda viene ignorata (risposta
+// {"ok":true,"duplicate":true}, nessuna riga scritta). Usa CacheService,
+// non crittografia: risolve i doppioni accidentali, non è una difesa
+// contro un attaccante deliberato (per quello serve il token, non questo).
+
+function getDedupeWindowSeconds_() {
+  var seconds = parseInt(PropertiesService.getScriptProperties().getProperty('DEDUPE_WINDOW_SECONDS'), 10);
+  // 21600 secondi (6 ore) è il TTL massimo consentito da CacheService.
+  return (!isNaN(seconds) && seconds > 0) ? Math.min(seconds, 21600) : 300;
+}
+
+function setDedupeWindowSeconds() {
+  var ui = SpreadsheetApp.getUi();
+  var resp = ui.prompt(
+    'Finestra di deduplicazione eventi',
+    'Se due richieste arrivano con la stessa "Chiave di deduplicazione" entro ' +
+      'questa finestra (in secondi, max 21600 = 6 ore), la seconda viene ignorata.' +
+      '\n\nValore attuale: ' + getDedupeWindowSeconds_() + ' secondi.',
+    ui.ButtonSet.OK_CANCEL
+  );
+  if (resp.getSelectedButton() !== ui.Button.OK) return;
+
+  var seconds = parseInt(resp.getResponseText().trim(), 10);
+  if (isNaN(seconds) || seconds <= 0) {
+    ui.alert('Inserisci un numero di secondi intero maggiore di zero.');
+    return;
+  }
+  PropertiesService.getScriptProperties().setProperty('DEDUPE_WINDOW_SECONDS', String(Math.min(seconds, 21600)));
+  ui.alert('Impostato: finestra di deduplicazione a ' + getDedupeWindowSeconds_() + ' secondi.');
+}
+
+// true se questa chiave è già stata vista entro la finestra configurata
+// (e la registra per la prossima volta); false alla prima occorrenza.
+function isDuplicateEvent_(key) {
+  var cache = CacheService.getScriptCache();
+  var cacheKey = 'dedupe_' + key;
+  if (cache.get(cacheKey)) return true;
+  cache.put(cacheKey, '1', getDedupeWindowSeconds_());
+  return false;
 }
 
 // ARCHIVIAZIONE RIGHE VECCHIE — opzionale, non necessaria perché i tag
