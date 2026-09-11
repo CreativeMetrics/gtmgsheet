@@ -127,6 +127,18 @@ il dettaglio di come farlo resta documentato in
 insieme ad altre opzioni (trucco Google Form, servizi terzi come Sheety/
 SheetDB), per riferimento se dovesse servire.
 
+## Test automatizzati dei template
+
+Entrambi i `.tpl` hanno scenari di test nel tab **Tests** dell'editor GTM
+(sezione `___TESTS___`), eseguibili con il pulsante "Run tests" quando
+apri/modifichi il template in GTM. Coprono: costruzione corretta della
+richiesta (URL/query string per il client, body JSON per il server),
+gestione di successo/fallimento, e le due protezioni descritte sopra
+(nomi di colonna riservati, chiave di deduplicazione) — pensati per
+restare verdi finché il comportamento documentato non cambia
+deliberatamente, così una modifica futura che lo rompesse per errore
+verrebbe segnalata subito.
+
 ## Nomi di colonna riservati
 
 Nella tabella "Dati da scrivere" di entrambi i tag, non usare `sheet`,

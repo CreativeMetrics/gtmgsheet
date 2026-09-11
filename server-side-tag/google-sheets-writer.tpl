@@ -250,7 +250,142 @@ ___SERVER_PERMISSIONS___
 
 ___TESTS___
 
-scenarios: []
+scenarios:
+- name: Costruisce il body JSON e chiama gtmOnSuccess su risposta ok
+  code: |-
+    const mockData = {
+      webAppUrl: 'https://script.google.com/macros/s/ABC123/exec',
+      sheetName: 'Foglio1',
+      secretToken: 'test-token',
+      dedupeKey: '',
+      rowData: [
+        { column1: 'event_name', column2: 'test_event' }
+      ],
+      enableLogging: false
+    };
+
+    mock('sendHttpRequest', (url, options, body) => {
+      assertThat(url).isEqualTo(mockData.webAppUrl);
+      assertThat(options.method).isEqualTo('POST');
+
+      const parsedBody = JSON.parse(body);
+      assertThat(parsedBody.event_name).isEqualTo('test_event');
+      assertThat(parsedBody.sheet).isEqualTo('Foglio1');
+      assertThat(parsedBody.token).isEqualTo('test-token');
+      assertThat(parsedBody._order).isEqualTo('event_name');
+
+      return Promise.create((resolve) => resolve({
+        statusCode: 200,
+        body: JSON.stringify({ ok: true })
+      }));
+    });
+
+    runCode(mockData);
+
+    callLater(() => {
+      assertApi('gtmOnSuccess').wasCalled();
+      assertApi('gtmOnFailure').wasNotCalled();
+    });
+- name: Chiama gtmOnFailure se la risposta non è 2xx
+  code: |-
+    const mockData = {
+      webAppUrl: 'https://script.google.com/macros/s/ABC123/exec',
+      sheetName: '',
+      secretToken: 'test-token',
+      dedupeKey: '',
+      rowData: [{ column1: 'event_name', column2: 'test_event' }],
+      enableLogging: false
+    };
+
+    mock('sendHttpRequest', (url, options, body) => {
+      return Promise.create((resolve) => resolve({
+        statusCode: 500,
+        body: 'internal error'
+      }));
+    });
+
+    runCode(mockData);
+
+    callLater(() => {
+      assertApi('gtmOnSuccess').wasNotCalled();
+      assertApi('gtmOnFailure').wasCalled();
+    });
+- name: Chiama gtmOnFailure se la richiesta HTTP fallisce
+  code: |-
+    const mockData = {
+      webAppUrl: 'https://script.google.com/macros/s/ABC123/exec',
+      sheetName: '',
+      secretToken: 'test-token',
+      dedupeKey: '',
+      rowData: [],
+      enableLogging: false
+    };
+
+    mock('sendHttpRequest', (url, options, body) => {
+      return Promise.create((resolve, reject) => reject('network error'));
+    });
+
+    runCode(mockData);
+
+    callLater(() => {
+      assertApi('gtmOnSuccess').wasNotCalled();
+      assertApi('gtmOnFailure').wasCalled();
+    });
+- name: Una colonna chiamata "token" non sovrascrive il token reale nel body
+  code: |-
+    const mockData = {
+      webAppUrl: 'https://script.google.com/macros/s/ABC123/exec',
+      sheetName: '',
+      secretToken: 'real-secret',
+      dedupeKey: '',
+      rowData: [
+        { column1: 'token', column2: 'attacker-value' },
+        { column1: 'event_name', column2: 'test_event' }
+      ],
+      enableLogging: false
+    };
+
+    mock('sendHttpRequest', (url, options, body) => {
+      const parsedBody = JSON.parse(body);
+      assertThat(parsedBody.token).isEqualTo('real-secret');
+
+      return Promise.create((resolve) => resolve({
+        statusCode: 200,
+        body: JSON.stringify({ ok: true })
+      }));
+    });
+
+    runCode(mockData);
+
+    callLater(() => {
+      assertApi('gtmOnSuccess').wasCalled();
+    });
+- name: La chiave di deduplicazione viene inclusa nel body quando impostata
+  code: |-
+    const mockData = {
+      webAppUrl: 'https://script.google.com/macros/s/ABC123/exec',
+      sheetName: '',
+      secretToken: 'test-token',
+      dedupeKey: 'evt-123',
+      rowData: [],
+      enableLogging: false
+    };
+
+    mock('sendHttpRequest', (url, options, body) => {
+      const parsedBody = JSON.parse(body);
+      assertThat(parsedBody._dedupe).isEqualTo('evt-123');
+
+      return Promise.create((resolve) => resolve({
+        statusCode: 200,
+        body: JSON.stringify({ ok: true })
+      }));
+    });
+
+    runCode(mockData);
+
+    callLater(() => {
+      assertApi('gtmOnSuccess').wasCalled();
+    });
 
 
 ___NOTES___

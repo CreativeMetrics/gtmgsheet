@@ -221,7 +221,123 @@ ___WEB_PERMISSIONS___
 
 ___TESTS___
 
-scenarios: []
+scenarios:
+- name: Costruisce l'URL con dati, sheet e token e invia il pixel
+  code: |-
+    const mockData = {
+      webAppUrl: 'https://script.google.com/macros/s/ABC123/exec',
+      sheetName: 'Foglio1',
+      secretToken: 'test-token',
+      dedupeKey: '',
+      rowData: [
+        { column1: 'event_name', column2: 'test_event' },
+        { column1: 'value', column2: '0' }
+      ],
+      enableLogging: false
+    };
+
+    mock('sendPixel', (url, onSuccess, onFailure) => {
+      assertThat(url.indexOf(mockData.webAppUrl) === 0).isEqualTo(true);
+      assertThat(url.indexOf('_order=event_name%7Cvalue') !== -1).isEqualTo(true);
+      assertThat(url.indexOf('event_name=test_event') !== -1).isEqualTo(true);
+      assertThat(url.indexOf('value=0') !== -1).isEqualTo(true);
+      assertThat(url.indexOf('sheet=Foglio1') !== -1).isEqualTo(true);
+      assertThat(url.indexOf('token=test-token') !== -1).isEqualTo(true);
+      assertThat(url.indexOf('_dedupe=') !== -1).isEqualTo(false);
+      onSuccess();
+    });
+
+    runCode(mockData);
+
+    assertApi('gtmOnSuccess').wasCalled();
+    assertApi('gtmOnFailure').wasNotCalled();
+- name: Una colonna chiamata "token" non finisce duplicata nell'URL
+  code: |-
+    const mockData = {
+      webAppUrl: 'https://script.google.com/macros/s/ABC123/exec',
+      sheetName: '',
+      secretToken: 'real-secret',
+      dedupeKey: '',
+      rowData: [
+        { column1: 'token', column2: 'attacker-value' },
+        { column1: 'event_name', column2: 'test_event' }
+      ],
+      enableLogging: false
+    };
+
+    mock('sendPixel', (url, onSuccess, onFailure) => {
+      const tokenOccurrences = url.split('token=').length - 1;
+      assertThat(tokenOccurrences).isEqualTo(1);
+      assertThat(url.indexOf('attacker-value') !== -1).isEqualTo(false);
+      onSuccess();
+    });
+
+    runCode(mockData);
+
+    assertApi('gtmOnSuccess').wasCalled();
+- name: La chiave di deduplicazione viene aggiunta quando impostata
+  code: |-
+    const mockData = {
+      webAppUrl: 'https://script.google.com/macros/s/ABC123/exec',
+      sheetName: '',
+      secretToken: 'test-token',
+      dedupeKey: 'evt-123',
+      rowData: [],
+      enableLogging: false
+    };
+
+    mock('sendPixel', (url, onSuccess, onFailure) => {
+      assertThat(url.indexOf('_dedupe=evt-123') !== -1).isEqualTo(true);
+      onSuccess();
+    });
+
+    runCode(mockData);
+
+    assertApi('gtmOnSuccess').wasCalled();
+- name: I valori 0 e stringa vuota non diventano N/A
+  code: |-
+    const mockData = {
+      webAppUrl: 'https://script.google.com/macros/s/ABC123/exec',
+      sheetName: '',
+      secretToken: '',
+      dedupeKey: '',
+      rowData: [
+        { column1: 'count', column2: 0 },
+        { column1: 'empty', column2: '' }
+      ],
+      enableLogging: false
+    };
+
+    mock('sendPixel', (url, onSuccess, onFailure) => {
+      assertThat(url.indexOf('count=0') !== -1).isEqualTo(true);
+      assertThat(url.indexOf('N%2FA') !== -1).isEqualTo(false);
+      assertThat(url.indexOf('N/A') !== -1).isEqualTo(false);
+      onSuccess();
+    });
+
+    runCode(mockData);
+
+    assertApi('gtmOnSuccess').wasCalled();
+- name: sendPixel usa lo stesso callback per successo e fallimento (fire-and-forget)
+  code: |-
+    const mockData = {
+      webAppUrl: 'https://script.google.com/macros/s/ABC123/exec',
+      sheetName: '',
+      secretToken: '',
+      dedupeKey: '',
+      rowData: [],
+      enableLogging: false
+    };
+
+    mock('sendPixel', (url, onSuccess, onFailure) => {
+      assertThat(onSuccess === onFailure).isEqualTo(true);
+      onFailure();
+    });
+
+    runCode(mockData);
+
+    assertApi('gtmOnSuccess').wasCalled();
+    assertApi('gtmOnFailure').wasNotCalled();
 
 
 ___NOTES___
