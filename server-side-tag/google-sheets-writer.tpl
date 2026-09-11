@@ -56,7 +56,7 @@ ___TEMPLATE_PARAMETERS___
     "name": "secretToken",
     "displayName": "Token condiviso",
     "simpleValueType": true,
-    "help": "Non inventarlo a mano: apri il foglio Google, menu \"Sheets Logger (GTM)\" → \"Mostra token attuale\" (generato in automatico da Apps Script) e incollalo qui. A differenza del tag client-side, qui il valore non transita mai verso il browser: resta nella configurazione del container server."
+    "help": "Non inventarlo a mano: apri il foglio Google, menu \"Sheets Logger (GTM)\" → \"Mostra configurazione\" (il token è generato in automatico da Apps Script, insieme a URL del Web App e nome del foglio) e incollalo qui. A differenza del tag client-side, qui il valore non transita mai verso il browser: resta nella configurazione del container server."
   },
   {
     "type": "SIMPLE_TABLE",
@@ -263,13 +263,15 @@ come per il tag client-side — vedi `apps-script/Code.gs` nel repository
 
 1. Segui il setup Apps Script descritto in
    `web-client-tag/google-sheets-logger.tpl` (sezione Documentazione) o in
-   `apps-script/Code.gs`: stesso script, stesso deployment. Il token non
+   `apps-script/Code.gs`: stesso script, stesso deployment. Nessun valore
    si scrive nel codice: apri il foglio, menu "Sheets Logger (GTM)" →
-   "Mostra token attuale" (generato al primo utilizzo).
+   "Imposta URL Web App" (una volta, dopo il Deploy) → "Mostra
+   configurazione" per leggere URL, nome del foglio e token insieme.
 2. In GTM (container Server): importa questo file (Templates → New →
-   menu ⋮ → Import), crea il tag, incolla lo stesso URL `/exec` e lo
-   stesso token mostrato dal menu, già usato per il tag client-side (o un
-   deployment separato con il suo token, se preferisci tenerli distinti).
+   menu ⋮ → Import), crea il tag, incolla lo stesso URL `/exec`, nome
+   foglio e token mostrati dal menu, già usati per il tag client-side (o
+   un deployment separato con i suoi valori, se preferisci tenerli
+   distinti).
 3. Compila la tabella "Dati da scrivere" mappando variabili di event data
    (es. `{{Event Name}}`, `{{Client ID}}`, `{{Timestamp}}`) come valore di
    ogni colonna.

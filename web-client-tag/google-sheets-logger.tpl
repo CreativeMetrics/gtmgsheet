@@ -42,21 +42,21 @@ ___TEMPLATE_PARAMETERS___
         "args": ["^https://script\\.google\\.com/macros/s/.+/exec$"]
       }
     ],
-    "help": "URL che termina in /exec ottenuto da Apps Script → Deploy → Nuovo deployment → tipo “App web”. Vedi il tab Documentazione di questo template per il codice Apps Script da incollare nel foglio."
+    "help": "URL che termina in /exec ottenuto da Apps Script → Deploy → Nuovo deployment → tipo “App web”. Dopo il Deploy apri il foglio Google, menu “Sheets Logger (GTM)” → “Imposta URL Web App” per salvarlo lì, poi “Mostra configurazione” per rileggerlo insieme a foglio e token. Vedi il tab Documentazione di questo template per il codice Apps Script da incollare nel foglio."
   },
   {
     "type": "TEXT",
     "name": "sheetName",
     "displayName": "Nome del foglio (tab)",
     "simpleValueType": true,
-    "help": "Nome della scheda dentro lo spreadsheet, es. Foglio1. Lascia vuoto per usare la prima scheda."
+    "help": "Nome della scheda dentro lo spreadsheet, es. Foglio1. Lascia vuoto per usare la prima scheda. Il nome esatto (case-sensitive) compare nel popup \"Mostra configurazione\" del menu Apps Script, insieme agli altri fogli presenti nel file."
   },
   {
     "type": "TEXT",
     "name": "secretToken",
     "displayName": "Token condiviso",
     "simpleValueType": true,
-    "help": "Non inventarlo a mano: apri il foglio Google, menu \"Sheets Logger (GTM)\" → \"Mostra token attuale\" (generato in automatico da Apps Script) e incollalo qui. L'endpoint /exec è pubblico: senza questo controllo chiunque legga il container GTM può scrivere nel foglio."
+    "help": "Non inventarlo a mano: apri il foglio Google, menu \"Sheets Logger (GTM)\" → \"Mostra configurazione\" (il token è generato in automatico da Apps Script) e incollalo qui. L'endpoint /exec è pubblico: senza questo controllo chiunque legga il container GTM può scrivere nel foglio."
   },
   {
     "type": "SIMPLE_TABLE",
@@ -226,7 +226,8 @@ senza la gestione di permessi/versioning di un template).
 function onOpen() {
   SpreadsheetApp.getUi()
     .createMenu('Sheets Logger (GTM)')
-    .addItem('Mostra token attuale', 'showSecret')
+    .addItem('Mostra configurazione (URL, foglio, token)', 'showConfig')
+    .addItem('Imposta URL Web App', 'setWebAppUrl')
     .addItem('Rigenera token', 'regenerateSecret')
     .addToUi();
 }
@@ -241,13 +242,55 @@ function getSecret_() {
   return secret;
 }
 
-function showSecret() {
+// L'URL del Web App non si legge in modo affidabile da codice
+// (ScriptApp.getService().getUrl() è noto per restituire un valore vuoto
+// o sbagliato quando chiamato da un menu invece che da doGet/doPost), quindi
+// lo si incolla una volta sola dopo il primo Deploy e resta salvato qui.
+function setWebAppUrl() {
   var ui = SpreadsheetApp.getUi();
-  ui.alert(
-    'Token condiviso attuale',
-    getSecret_() + '\n\nCopialo nel campo "Token condiviso" di entrambi i tag GTM (client e server).',
-    ui.ButtonSet.OK
+  var props = PropertiesService.getScriptProperties();
+  var current = props.getProperty('WEBAPP_URL') || '';
+  var resp = ui.prompt(
+    'URL del Web App',
+    'Incolla l\'URL che termina in /exec, copiato da Deploy > Gestisci deployment ' +
+      'dopo aver pubblicato questo script come App web.' +
+      (current ? '\n\nValore attuale: ' + current : ''),
+    ui.ButtonSet.OK_CANCEL
   );
+  if (resp.getSelectedButton() !== ui.Button.OK) return;
+
+  var url = resp.getResponseText().trim();
+  if (url && (url.indexOf('https://script.google.com/macros/s/') !== 0 || url.indexOf('/exec') === -1)) {
+    ui.alert('URL non valido: deve iniziare con https://script.google.com/macros/s/ e terminare in /exec.');
+    return;
+  }
+  props.setProperty('WEBAPP_URL', url);
+  showConfig();
+}
+
+function showConfig() {
+  var ui = SpreadsheetApp.getUi();
+  var url = PropertiesService.getScriptProperties().getProperty('WEBAPP_URL');
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var activeName = ss.getActiveSheet().getName();
+  var otherNames = ss.getSheets()
+    .map(function (s) { return s.getName(); })
+    .filter(function (n) { return n !== activeName; });
+
+  var lines = [
+    'Apps Script Web App URL:',
+    url || '(non impostato — usa "Imposta URL Web App" dopo il Deploy)',
+    '',
+    'Nome del foglio (tab) attivo:',
+    activeName
+  ];
+  if (otherNames.length) {
+    lines.push('Altri fogli in questo file: ' + otherNames.join(', '));
+  }
+  lines.push('', 'Token condiviso:', getSecret_());
+  lines.push('', 'Copia questi valori nei campi corrispondenti dei tag GTM (client e/o server).');
+
+  ui.alert('Configurazione per i tag GTM', lines.join('\n'), ui.ButtonSet.OK);
 }
 
 function regenerateSecret() {
@@ -259,7 +302,7 @@ function regenerateSecret() {
   );
   if (resp !== ui.Button.YES) return;
   PropertiesService.getScriptProperties().setProperty('SHARED_SECRET', Utilities.getUuid());
-  showSecret();
+  showConfig();
 }
 
 function doGet(e) {
@@ -344,18 +387,24 @@ function jsonOutput_(obj) {
      inviare header di autenticazione, quindi il deployment deve essere
      pubblico; il token condiviso è l'unico controllo di accesso
      disponibile in questo scenario).
-5. Copia l'URL che termina in `/exec` e incollalo nel campo "Apps Script
-   Web App URL" del tag.
-6. Ricarica la pagina del foglio Google (serve perché `onOpen` giri e
+   - Copia l'URL che termina in `/exec` mostrato a fine deploy.
+5. Ricarica la pagina del foglio Google (serve perché `onOpen` giri e
    crei il menu): comparirà **Sheets Logger (GTM)** nella barra dei menu.
-   Clicca **Mostra token attuale**: il token viene generato al primo
-   utilizzo (non c'è nulla da inventare o scrivere nel codice) e salvato
-   nelle Proprietà dello script, non nel testo del file. Copialo nel
-   campo "Token condiviso" del tag.
-7. **Ogni volta che modifichi il codice devi ri-deployare** (Deploy →
+   - Clicca **Imposta URL Web App** e incolla l'URL copiato al punto 4.
+   - Clicca **Mostra configurazione**: si apre un unico popup con i tre
+     valori da incollare nei tag GTM — **URL del Web App**, **nome del
+     foglio (tab)** attivo (e l'elenco degli altri fogli presenti, se ce
+     ne sono) e **token condiviso** (generato al primo utilizzo, non c'è
+     nulla da inventare o scrivere nel codice). Copia ciascun valore nel
+     campo corrispondente del tag: "Apps Script Web App URL", "Nome del
+     foglio (tab)", "Token condiviso".
+6. **Ogni volta che modifichi il codice devi ri-deployare** (Deploy →
    Gestisci deployment → Modifica → Nuova versione), altrimenti gira la
-   versione precedente. Il token invece sopravvive ai redeploy: vive nelle
-   Proprietà dello script, non nel codice.
+   versione precedente. **L'URL del deployment cambia solo se crei un
+   nuovo deployment** (non con "Nuova versione" su uno esistente): in tal
+   caso ripeti "Imposta URL Web App" con il nuovo URL. Il token invece
+   sopravvive sempre, a qualunque redeploy: vive nelle Proprietà dello
+   script, non nel codice.
 
 ## Perché lo script è "container-bound" e non prende uno Spreadsheet ID
 

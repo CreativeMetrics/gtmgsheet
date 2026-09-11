@@ -18,19 +18,23 @@
  * - Supporta sia GET (usato dal tag client con sendPixel) sia POST
  *   (usato dal tag server-side con sendHttpRequest).
  *
- * TOKEN — come vederlo/rigenerarlo:
+ * CONFIGURAZIONE PER I TAG GTM — come vederla:
  * Apri il foglio Google normalmente: dopo aver salvato questo script
  * comparirà un menu "Sheets Logger (GTM)" nella barra del foglio con le
- * voci "Mostra token attuale" e "Rigenera token". Il token vive in
- * PropertiesService (Proprietà dello script), non nel testo del codice:
- * non finisce per errore in un file condiviso, in un export del
- * container o in questo stesso repository.
+ * voci "Mostra configurazione", "Imposta URL Web App" e "Rigenera token".
+ * "Mostra configurazione" riassume in un solo popup i tre valori da
+ * incollare nei tag GTM (client e/o server): URL del Web App, nome del
+ * foglio (tab) e token condiviso. Token e URL vivono in PropertiesService
+ * (Proprietà dello script), non nel testo del codice: non finiscono per
+ * errore in un file condiviso, in un export del container o in questo
+ * stesso repository.
  */
 
 function onOpen() {
   SpreadsheetApp.getUi()
     .createMenu('Sheets Logger (GTM)')
-    .addItem('Mostra token attuale', 'showSecret')
+    .addItem('Mostra configurazione (URL, foglio, token)', 'showConfig')
+    .addItem('Imposta URL Web App', 'setWebAppUrl')
     .addItem('Rigenera token', 'regenerateSecret')
     .addToUi();
 }
@@ -45,14 +49,55 @@ function getSecret_() {
   return secret;
 }
 
-function showSecret() {
+// L'URL del Web App non si legge in modo affidabile da codice
+// (ScriptApp.getService().getUrl() è noto per restituire un valore vuoto
+// o sbagliato quando chiamato da un menu invece che da doGet/doPost), quindi
+// lo si incolla una volta sola dopo il primo Deploy e resta salvato qui.
+function setWebAppUrl() {
   var ui = SpreadsheetApp.getUi();
-  ui.alert(
-    'Token condiviso attuale',
-    getSecret_() + '\n\nCopialo nel campo "Token condiviso" di entrambi i tag ' +
-      'GTM (client-side e server-side) che puntano a questo foglio.',
-    ui.ButtonSet.OK
+  var props = PropertiesService.getScriptProperties();
+  var current = props.getProperty('WEBAPP_URL') || '';
+  var resp = ui.prompt(
+    'URL del Web App',
+    'Incolla l\'URL che termina in /exec, copiato da Deploy > Gestisci deployment ' +
+      'dopo aver pubblicato questo script come App web.' +
+      (current ? '\n\nValore attuale: ' + current : ''),
+    ui.ButtonSet.OK_CANCEL
   );
+  if (resp.getSelectedButton() !== ui.Button.OK) return;
+
+  var url = resp.getResponseText().trim();
+  if (url && (url.indexOf('https://script.google.com/macros/s/') !== 0 || url.indexOf('/exec') === -1)) {
+    ui.alert('URL non valido: deve iniziare con https://script.google.com/macros/s/ e terminare in /exec.');
+    return;
+  }
+  props.setProperty('WEBAPP_URL', url);
+  showConfig();
+}
+
+function showConfig() {
+  var ui = SpreadsheetApp.getUi();
+  var url = PropertiesService.getScriptProperties().getProperty('WEBAPP_URL');
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var activeName = ss.getActiveSheet().getName();
+  var otherNames = ss.getSheets()
+    .map(function (s) { return s.getName(); })
+    .filter(function (n) { return n !== activeName; });
+
+  var lines = [
+    'Apps Script Web App URL:',
+    url || '(non impostato — usa "Imposta URL Web App" dopo il Deploy)',
+    '',
+    'Nome del foglio (tab) attivo:',
+    activeName
+  ];
+  if (otherNames.length) {
+    lines.push('Altri fogli in questo file: ' + otherNames.join(', '));
+  }
+  lines.push('', 'Token condiviso:', getSecret_());
+  lines.push('', 'Copia questi valori nei campi corrispondenti dei tag GTM (client e/o server).');
+
+  ui.alert('Configurazione per i tag GTM', lines.join('\n'), ui.ButtonSet.OK);
 }
 
 function regenerateSecret() {
@@ -65,7 +110,7 @@ function regenerateSecret() {
   );
   if (resp !== ui.Button.YES) return;
   PropertiesService.getScriptProperties().setProperty('SHARED_SECRET', Utilities.getUuid());
-  showSecret();
+  showConfig();
 }
 
 function doGet(e) {

@@ -46,13 +46,20 @@ docs/
 
 1. Apri il Google Sheet di destinazione → Estensioni → Apps Script.
 2. Incolla il contenuto di `apps-script/Code.gs` (nessuna costante da
-   modificare: il token si genera da solo, vedi sotto).
+   modificare: token e URL si gestiscono dal menu, vedi sotto).
 3. Deploy → Nuovo deployment → App web → Esegui come "Me" → Accesso
-   "Chiunque". Copia l'URL `/exec`.
+   "Chiunque". Copia l'URL `/exec` mostrato a fine deploy.
 4. Ricarica la pagina del foglio: comparirà il menu **Sheets Logger
-   (GTM)** → **Mostra token attuale**. Il token viene generato al primo
-   utilizzo e salvato in `PropertiesService` (Proprietà dello script), mai
-   nel testo del codice — copialo da lì, non inventarlo a mano.
+   (GTM)**.
+   - **Imposta URL Web App** → incolla l'URL copiato al punto 3 (si
+     salva in `PropertiesService`; `ScriptApp.getService().getUrl()` non
+     è affidabile se chiamato da un menu, per questo si incolla a mano
+     una volta sola).
+   - **Mostra configurazione** → un unico popup con i tre valori pronti
+     da incollare nei tag: **URL del Web App**, **nome del foglio (tab)**
+     attivo (con l'elenco degli altri fogli, se il file ne ha più di
+     uno) e **token condiviso** (generato al primo utilizzo, mai da
+     inventare a mano).
 
 Il codice è duplicato anche nella sezione Documentazione di
 `google-sheets-logger.tpl` (`___NOTES___`), così resta visibile
@@ -63,8 +70,8 @@ aprire il repository.
 
 1. Completa il setup Apps Script sopra.
 2. In GTM (container Web): importa `web-client-tag/google-sheets-logger.tpl`,
-   crea il tag, incolla l'URL `/exec` e il token mostrato dal menu di
-   Apps Script nel campo "Token condiviso", compila la tabella
+   crea il tag, incolla i tre valori mostrati da "Mostra configurazione"
+   (URL, nome del foglio, token) nei rispettivi campi, compila la tabella
    colonna→valore, assegna un trigger.
 3. Verifica in preview (tab della richiesta in uscita) e controlla che la
    riga compaia nel foglio.
@@ -73,12 +80,12 @@ aprire il repository.
 
 1. Completa lo stesso setup Apps Script sopra (può essere lo stesso
    deployment usato dal tag client, o uno diverso — in tal caso avrà un
-   suo token separato).
+   suo URL/token separati).
 2. In GTM (container Server): importa
-   `server-side-tag/google-sheets-writer.tpl`, crea il tag, incolla lo
-   stesso URL `/exec` e lo stesso token, compila la tabella
-   colonna→valore mappando variabili di event data (es. `{{Event Name}}`,
-   `{{Client ID}}`), assegna un trigger.
+   `server-side-tag/google-sheets-writer.tpl`, crea il tag, incolla gli
+   stessi tre valori di "Mostra configurazione" usati per il tag client,
+   compila la tabella colonna→valore mappando variabili di event data
+   (es. `{{Event Name}}`, `{{Client ID}}`), assegna un trigger.
 3. Verifica in preview lo status code e il body della risposta
    (`{"ok":true}` = riga scritta) verso `script.google.com` /
    `script.googleusercontent.com`.
