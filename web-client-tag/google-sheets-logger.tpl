@@ -433,6 +433,12 @@ function handleRequest_(p) {
       // Foglio vuoto: crea l'intestazione la prima volta
       headers = ['timestamp'].concat(incoming);
       sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+      // Fissa il formato della colonna A (sempre "timestamp" qui) a
+      // yyyy-mm-dd hh:mm:ss per tutta l'estensione del foglio, così ogni
+      // riga futura lo eredita a prescindere da locale o formattazione
+      // preesistente della cella (senza questo, un Date scritto via API
+      // può apparire come numero seriale finché Sheets non lo rileva).
+      sheet.getRange(2, 1, sheet.getMaxRows() - 1, 1).setNumberFormat('yyyy-mm-dd hh:mm:ss');
     } else {
       // Aggiunge in coda le colonne mai viste prima, senza toccare quelle esistenti
       var missing = incoming.filter(function (c) { return headers.indexOf(c) === -1; });
