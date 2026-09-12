@@ -133,11 +133,34 @@ Entrambi i `.tpl` hanno scenari di test nel tab **Tests** dell'editor GTM
 (sezione `___TESTS___`), eseguibili con il pulsante "Run tests" quando
 apri/modifichi il template in GTM. Coprono: costruzione corretta della
 richiesta (URL/query string per il client, body JSON per il server),
-gestione di successo/fallimento, e le due protezioni descritte sopra
-(nomi di colonna riservati, chiave di deduplicazione) — pensati per
-restare verdi finché il comportamento documentato non cambia
+gestione di successo/fallimento, e le protezioni descritte sopra (nomi di
+colonna riservati, colonne duplicate, chiave di deduplicazione) — pensati
+per restare verdi finché il comportamento documentato non cambia
 deliberatamente, così una modifica futura che lo rompesse per errore
 verrebbe segnalata subito.
+
+## CI — verifica automatica ad ogni push
+
+`.github/workflows/verify-templates.yml` esegue `scripts/verify-templates.js`
+ad ogni push e pull request. Controlla, senza bisogno di aprire GTM o
+Apps Script:
+
+- che la sintassi JavaScript di `apps-script/Code.gs` e delle sezioni
+  sandboxed di entrambi i `.tpl` sia valida;
+- che la copia di `Code.gs` incorporata in `___NOTES___` di
+  `web-client-tag/google-sheets-logger.tpl` sia **byte-identica** (riga
+  per riga) al file reale — segnalando la prima riga diversa, se non lo è;
+- che i blocchi ` ``` ` nei `.tpl` siano bilanciati (nessuna fence
+  markdown aperta e mai chiusa);
+- che tutte le sezioni `___..._ ___` obbligatorie siano presenti in
+  entrambi i file.
+
+Nasce da due bug reali capitati durante lo sviluppo (una fence lasciata
+aperta da una modifica, e la copia incorporata rimasta disallineata senza
+che un confronto manuale parziale se ne accorgesse) — invece di scoprirli
+solo rilanciando una revisione a mano, ora ogni push li segnala da solo.
+Per eseguirlo in locale: `node scripts/verify-templates.js` (nessuna
+dipendenza da installare, solo Node.js).
 
 ## Nomi di colonna riservati
 

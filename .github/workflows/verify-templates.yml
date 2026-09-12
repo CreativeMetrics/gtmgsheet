@@ -1,0 +1,25 @@
+name: Verify GTM templates
+
+# Gira su ogni push e ogni pull request: controlla che apps-script/Code.gs
+# e i due template GTM (.tpl) restino coerenti tra loro. Vedi
+# scripts/verify-templates.js per il dettaglio dei controlli e il perché
+# di ciascuno (nasce da due bug reali capitati durante lo sviluppo: una
+# fence markdown lasciata aperta e una copia di Code.gs disallineata).
+on:
+  push:
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Verifica coerenza Code.gs / template .tpl
+        run: node scripts/verify-templates.js
