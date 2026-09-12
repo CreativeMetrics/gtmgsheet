@@ -282,7 +282,7 @@ scenarios:
 
     assertApi('gtmOnSuccess').wasCalled();
     assertApi('gtmOnFailure').wasNotCalled();
-- name: 'Una colonna chiamata "token" non finisce duplicata nell''URL'
+- name: 'Una colonna chiamata ''token'' non finisce duplicata nell''URL'
   code: |-
     const mockData = {
       webAppUrl: 'https://script.google.com/macros/s/ABC123/exec',
@@ -396,7 +396,7 @@ scenarios:
 
     assertApi('gtmOnSuccess').wasCalled();
     assertApi('gtmOnFailure').wasNotCalled();
-- name: 'Una colonna chiamata "toString" (proprietà ereditata da Object.prototype, non nella lista dei nomi riservati) non viene scartata'
+- name: 'Una colonna chiamata ''toString'' (proprietà ereditata da Object.prototype, non nella lista dei nomi riservati) non viene scartata'
   code: |-
     const mockData = {
       webAppUrl: 'https://script.google.com/macros/s/ABC123/exec',
@@ -418,7 +418,7 @@ scenarios:
     runCode(mockData);
 
     assertApi('gtmOnSuccess').wasCalled();
-- name: 'Una colonna chiamata "__proto__" viene scartata come riservata'
+- name: 'Una colonna chiamata ''__proto__'' viene scartata come riservata'
   code: |-
     const mockData = {
       webAppUrl: 'https://script.google.com/macros/s/ABC123/exec',

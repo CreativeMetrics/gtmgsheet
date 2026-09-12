@@ -143,16 +143,17 @@ function checkJsonSection(content, label, startMarker, endMarker) {
   }
 }
 
-// GTM legge ___TESTS___ come YAML nel proprio tab "Test": un nome di
-// scenario "- name: ..." scritto come scalare YAML "plain" (senza
-// apici) che contiene virgolette doppie letterali e/o un punto si è
-// rivelato, importando il template in un container GTM reale, un caso
-// che il parser YAML del tab Test rifiuta in fase di importazione (voce
-// non selezionabile/errore nella lista "Setup"), pur essendo YAML
-// valido per altri parser generici. Per essere sicuri, ogni "- name:"
-// deve essere uno scalare a virgolette singole ben formato — es.
-// 'Una colonna chiamata "token"...' oppure, per un apice letterale,
-// 'Costruisce l''URL...' (l'apice si raddoppia, non si escapa con \).
+// GTM legge ___TESTS___ come YAML nel proprio tab "Test", ma il nome di
+// ogni scenario ("- name: ...") passa poi per una validazione propria di
+// GTM (separata dal parsing YAML) che rifiuta qualunque virgoletta
+// doppia letterale nel nome, riportando in importazione l'errore
+// "Test name '...' is invalid. The name contains invalid character: \"\"\""
+// — confermato importando il template in un container reale. Per
+// evitarlo, ogni "- name:" deve (a) essere uno scalare YAML a virgolette
+// singole ben formato — es. 'Costruisce l''URL...' (l'apice si
+// raddoppia, non si escapa con \) — e (b) il testo che ne risulta, una
+// volta tolte le virgolette singole di delimitazione, non deve contenere
+// nessun carattere '"'.
 function checkTestsScenarioNames(content, label) {
   const testsSection = extractSection(content, '___TESTS___', '___NOTES___');
   if (testsSection === null) {
@@ -169,8 +170,19 @@ function checkTestsScenarioNames(content, label) {
     if (!/^'(?:[^']|'')*'$/.test(value)) {
       fail(
         label + ': lo scenario di test alla riga ' + (idx + 1) + ' di ___TESTS___ non è tra apici singoli in modo corretto (' +
-          JSON.stringify(value) + '). Un nome scenario con virgolette doppie o punti scritto come scalare YAML "plain" ' +
-          '(senza apici) può essere rifiutato dal tab Test di GTM in fase di importazione — vedi il commento sopra a questa funzione.'
+          JSON.stringify(value) + ') — vedi il commento sopra a questa funzione.'
+      );
+      return;
+    }
+    // Scarta le virgolette singole di delimitazione e riduce le coppie
+    // '' interne all'apice letterale che rappresentano, per ottenere il
+    // nome effettivo che GTM vede.
+    const decoded = value.slice(1, -1).replace(/''/g, "'");
+    if (decoded.indexOf('"') !== -1) {
+      fail(
+        label + ': lo scenario di test alla riga ' + (idx + 1) + ' di ___TESTS___ contiene una virgoletta doppia letterale (' +
+          JSON.stringify(decoded) + ') — GTM rifiuta questo carattere nel nome dello scenario in fase di importazione, ' +
+          'indipendentemente da come è quotato in YAML.'
       );
     }
   });

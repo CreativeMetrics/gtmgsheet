@@ -173,14 +173,15 @@ Apps Script:
   (GTM li legge come tali; un refuso qui non è un errore di sintassi
   JavaScript e altrimenti si scoprirebbe solo importando il template in GTM);
 - che ogni `- name:` di scenario in `___TESTS___` sia uno scalare YAML tra
-  apici singoli ben formato (es. `'Costruisce l''URL...'`). GTM legge
-  anche `___TESTS___` come YAML nel proprio tab Test, e un nome scritto
-  come scalare "plain" (senza apici) contenente virgolette doppie
-  letterali e/o un punto è risultato, importando il template in un
-  container reale, non selezionabile/in errore nella lista Setup del tab
-  Test — pur essendo YAML valido per parser generici. Gli apici singoli
-  (con l'apice raddoppiato per uno letterale, `''`, non `\'`) evitano
-  l'ambiguità.
+  apici singoli ben formato (es. `'Costruisce l''URL...'`, con l'apice
+  raddoppiato per uno letterale, `''`, non `\'`) e che il nome che ne
+  risulta non contenga nessuna virgoletta doppia (`"`) letterale.
+  Importando un template con una virgoletta doppia in un nome di
+  scenario in un container GTM reale, l'errore è: `Test name '...' is
+  invalid. The name contains invalid character: """.` — è una
+  validazione propria del tab Test di GTM sul nome dello scenario,
+  distinta dal parsing YAML (che accetta senza problemi una virgoletta
+  doppia dentro uno scalare tra apici singoli).
 
 Nasce da tre bug reali capitati durante lo sviluppo (una fence lasciata
 aperta da una modifica, la copia incorporata rimasta disallineata senza
