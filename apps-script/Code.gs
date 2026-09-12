@@ -225,6 +225,17 @@ function handleRequest_(p) {
     // superare entrambe il controllo prima che una delle due la registri.
     // Qui invece solo un'esecuzione alla volta può leggere/scrivere la
     // stessa chiave, quindi la deduplicazione è priva di questa corsa.
+    //
+    // Il controllo (isDuplicateEvent_) e la registrazione (markEventSeen_)
+    // sono deliberatamente due passi separati: la chiave viene marcata
+    // come "vista" solo DOPO che la riga è stata scritta con successo, più
+    // in basso. Se la registrassimo qui (prima di risolvere il foglio e
+    // scrivere la riga) e la scrittura poi fallisse per un errore
+    // transitorio (foglio non trovato, quota, eccezione qualsiasi), un
+    // eventuale retry con la stessa chiave entro la finestra di
+    // deduplicazione troverebbe la chiave già marcata e risponderebbe
+    // {"ok":true,"duplicate":true} senza che la riga sia mai stata scritta:
+    // una perdita di dati silenziosa e mascherata da falso successo.
     if (p._dedupe && isDuplicateEvent_(p._dedupe)) {
       return jsonOutput_({ ok: true, duplicate: true });
     }
@@ -244,8 +255,14 @@ function handleRequest_(p) {
     // colonna con lo stesso nome.
     var reserved = { sheet: 1, token: 1, _order: 1, ping: 1, _dedupe: 1, timestamp: 1 };
 
-    // Ordine dichiarato dal tag (preserva l'ordine impostato nella tabella del tag)
-    var declared = String(p._order || '').split('|').filter(function (c) { return c; });
+    // Ordine dichiarato dal tag (preserva l'ordine impostato nella tabella del tag).
+    // Filtrato anche qui su "reserved", non solo per "extras" più sotto: "_order"
+    // è comunque un parametro HTTP come un altro per chi chiama l'endpoint
+    // direttamente (non solo tramite il template GTM, che già lo filtra lato suo),
+    // quindi un valore come "_order=token|foo" creerebbe altrimenti una colonna di
+    // intestazione chiamata "token" (scritta sempre vuota per via del controllo su
+    // "reserved" più sotto, ma comunque una colonna spuria che non dovrebbe esistere).
+    var declared = String(p._order || '').split('|').filter(function (c) { return c && !reserved[c]; });
 
     // Eventuali parametri extra non dichiarati, aggiunti in coda
     var extras = Object.keys(p).filter(function (k) {
@@ -256,10 +273,7 @@ function handleRequest_(p) {
     // Intestazione attuale del foglio (trim difensivo: uno spazio in coda
     // digitato per errore in un'intestazione farebbe fallire il confronto
     // con i nomi di colonna dichiarati e ne creerebbe una duplicata)
-    var lastCol = sheet.getLastColumn();
-    var headers = lastCol > 0
-      ? sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(function (h) { return String(h).trim(); })
-      : [];
+    var headers = getTrimmedHeaders_(sheet);
 
     if (headers.length === 0 || headers.join('') === '') {
       // Foglio vuoto: crea l'intestazione la prima volta. "timestamp" è
@@ -267,7 +281,14 @@ function handleRequest_(p) {
       // qui protegge anche una richiesta scritta a mano (non passata dal
       // template GTM) che ignorasse quella protezione.
       headers = ['timestamp'].concat(incoming.filter(function (c) { return c !== 'timestamp'; }));
-      sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+      // I NOMI di colonna passano da setValues esattamente come i valori
+      // di riga: senza sanitizeForSheet_ anche qui, un nome di colonna che
+      // iniziasse per = + - @ (arrivato da una chiamata diretta
+      // all'endpoint, non necessariamente dal template GTM che filtra i
+      // nomi lato suo) diventerebbe una formula eseguita all'apertura del
+      // foglio — la stessa classe di rischio che sanitizeForSheet_ esiste
+      // per neutralizzare sui valori, qui applicata ai nomi di intestazione.
+      sheet.getRange(1, 1, 1, headers.length).setValues([headers.map(sanitizeForSheet_)]);
       // Fissa il formato della colonna A (sempre "timestamp" qui) a
       // yyyy-mm-dd hh:mm:ss per tutta l'estensione del foglio, così ogni
       // riga futura lo eredita a prescindere da locale o formattazione
@@ -288,7 +309,10 @@ function handleRequest_(p) {
       // Aggiunge in coda le colonne mai viste prima, senza toccare quelle esistenti
       var missing = incoming.filter(function (c) { return headers.indexOf(c) === -1; });
       if (missing.length) {
-        sheet.getRange(1, headers.length + 1, 1, missing.length).setValues([missing]);
+        // Vedi il commento sopra (creazione intestazione): sanitizeForSheet_
+        // si applica anche qui per lo stesso motivo, sui nomi delle colonne
+        // aggiunte in coda.
+        sheet.getRange(1, headers.length + 1, 1, missing.length).setValues([missing.map(sanitizeForSheet_)]);
         headers = headers.concat(missing);
       }
     }
@@ -312,6 +336,12 @@ function handleRequest_(p) {
     });
 
     sheet.appendRow(row);
+    // Marca la chiave come vista solo ora che la riga è stata scritta
+    // con successo (vedi il commento più sopra, prima del controllo
+    // isDuplicateEvent_, sul perché i due passi sono separati).
+    if (p._dedupe) {
+      markEventSeen_(p._dedupe);
+    }
     return jsonOutput_({ ok: true });
   } catch (err) {
     return jsonOutput_({ ok: false, error: String(err) });
@@ -336,6 +366,18 @@ function handleRequest_(p) {
 function sanitizeForSheet_(v) {
   if (typeof v !== 'string') return v;
   return /^[=+\-@]/.test(v) ? "'" + v : v;
+}
+
+// Intestazione (riga 1) del foglio dato, con trim difensivo su ogni cella
+// (uno spazio in coda digitato per errore farebbe fallire il confronto con
+// i nomi di colonna attesi). Foglio senza colonne -> array vuoto. Usata sia
+// da handleRequest_ (per allineare la riga in arrivo) sia da
+// archiveOldRows_ (per trovare la colonna "timestamp").
+function getTrimmedHeaders_(sheet) {
+  var lastCol = sheet.getLastColumn();
+  return lastCol > 0
+    ? sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(function (h) { return String(h).trim(); })
+    : [];
 }
 
 // DEDUPLICA EVENTI — opzionale: attiva solo se il tag valorizza il campo
@@ -373,14 +415,20 @@ function setDedupeWindowSeconds() {
   ui.alert('Impostato: finestra di deduplicazione a ' + getDedupeWindowSeconds_() + ' secondi.');
 }
 
-// true se questa chiave è già stata vista entro la finestra configurata
-// (e la registra per la prossima volta); false alla prima occorrenza.
+// true se questa chiave è già stata vista (e registrata con successo,
+// tramite markEventSeen_) entro la finestra configurata; false altrimenti.
+// Sola lettura: non registra nulla, così un tentativo la cui scrittura poi
+// fallisce non "brucia" la chiave per un retry legittimo (vedi
+// markEventSeen_ e il commento in handleRequest_).
 function isDuplicateEvent_(key) {
-  var cache = CacheService.getScriptCache();
-  var cacheKey = 'dedupe_' + key;
-  if (cache.get(cacheKey)) return true;
-  cache.put(cacheKey, '1', getDedupeWindowSeconds_());
-  return false;
+  return !!CacheService.getScriptCache().get('dedupe_' + key);
+}
+
+// Registra la chiave come vista per la finestra di deduplicazione
+// configurata. Va chiamata solo DOPO che la riga corrispondente è stata
+// scritta con successo, mai prima (vedi isDuplicateEvent_ sopra).
+function markEventSeen_(key) {
+  CacheService.getScriptCache().put('dedupe_' + key, '1', getDedupeWindowSeconds_());
 }
 
 // ARCHIVIAZIONE RIGHE VECCHIE — opzionale, non necessaria perché i tag
@@ -446,7 +494,7 @@ function archiveOldRows_() {
       var lastCol = sheet.getLastColumn();
       if (lastRow < 2 || lastCol < 1) return; // nessuna riga di dati oltre l'intestazione
 
-      var headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(function (h) { return String(h).trim(); });
+      var headers = getTrimmedHeaders_(sheet);
       var tsCol = headers.indexOf('timestamp');
       if (tsCol === -1) return; // non è un tab scritto da questo script
 
