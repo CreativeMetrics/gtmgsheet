@@ -38,11 +38,25 @@ server-side-tag/
   google-sheets-writer.tpl   ← template GTM da importare nel container Server
 apps-script/
   Code.gs                    ← script da incollare nel foglio (usato da entrambi i tag)
+  appsscript.json            ← manifest del progetto Apps Script (usato da clasp)
+  .clasp.json.example        ← copialo in .clasp.json e inserisci il tuo Script ID
 docs/
   no-apps-script-alternatives.md
+  clasp-deploy.md            ← deploy di Code.gs da terminale, senza copia-incolla
+scripts/
+  verify-templates.js        ← controlli di coerenza usati dalla CI (vedi sotto)
+.github/workflows/
+  verify-templates.yml       ← esegue verify-templates.js ad ogni push/PR
 ```
 
 ## Setup — Apps Script (comune a entrambi i tag)
+
+Il primo setup si fa nell'editor web (sotto). Per gli aggiornamenti
+successivi a `Code.gs`, [`docs/clasp-deploy.md`](docs/clasp-deploy.md)
+spiega come inviarli da terminale con `clasp` invece di copiarli a mano —
+utile perché il file è cresciuto ed è facile disallinearlo dall'editor
+web modificandolo solo lì. Resta comunque possibile continuare a
+copia-incollare come descritto qui sotto, se preferisci.
 
 1. Apri il Google Sheet di destinazione → Estensioni → Apps Script.
 2. Incolla il contenuto di `apps-script/Code.gs` (nessuna costante da

@@ -1,0 +1,8 @@
+# clasp (deploy di apps-script/Code.gs) — .clasp.json contiene lo Script ID
+# del TUO progetto Apps Script, specifico per account/foglio: non va condiviso
+# nel repository. Copia apps-script/.clasp.json.example e compila il tuo.
+apps-script/.clasp.json
+
+# Credenziali locali di clasp, se mai finissero nella cartella del progetto
+# invece che nella home dell'utente (dove le mette normalmente `clasp login`).
+.clasprc.json
