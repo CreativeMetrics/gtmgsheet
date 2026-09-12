@@ -522,11 +522,56 @@ function archiveOldRows_() {
 
       var archiveName = name + ' - Archivio';
       var archiveSheet = ss.getSheetByName(archiveName);
-      if (!archiveSheet) {
+      var isNewArchiveSheet = !archiveSheet;
+      if (isNewArchiveSheet) {
         archiveSheet = ss.insertSheet(archiveName);
-        archiveSheet.getRange(1, 1, 1, headers.length).setValues([headers]);
       }
-      archiveSheet.getRange(archiveSheet.getLastRow() + 1, 1, oldRows.length, headers.length).setValues(oldRows);
+      // Riscrive sempre l'intestazione (invece di farlo solo alla creazione
+      // del tab): se il tab principale ha guadagnato colonne dopo che
+      // l'archivio esisteva già, senza questo l'intestazione dell'archivio
+      // resterebbe quella vecchia, più corta, e i valori delle colonne
+      // nuove finirebbero comunque scritti (nella posizione corretta) ma
+      // sotto un'intestazione mancante/disallineata.
+      // sanitizeForSheet_ qui non è opzionale: "headers" arriva da
+      // getTrimmedHeaders_ (il valore già scritto nel foglio sorgente), non
+      // da un nome appena digitato, quindi passa già per questa funzione la
+      // prima volta che l'intestazione viene creata più sopra — ma qui va
+      // riapplicata comunque per lo stesso motivo dei valori di riga sotto.
+      archiveSheet.getRange(1, 1, 1, headers.length).setValues([headers.map(sanitizeForSheet_)]);
+      if (isNewArchiveSheet) {
+        // Stesso formato del tab principale per la colonna "timestamp":
+        // senza questo, i valori Date spostati qui sotto rischiano di
+        // apparire come numero seriale invece che come data leggibile
+        // (vedi il commento analogo nella creazione dell'intestazione del
+        // tab principale, più sopra in handleRequest_). In try/catch per lo
+        // stesso motivo: è cosmetico, non deve bloccare l'archiviazione.
+        try {
+          var archiveFormatRows = archiveSheet.getMaxRows() - 1;
+          if (archiveFormatRows > 0) {
+            archiveSheet.getRange(2, tsCol + 1, archiveFormatRows, 1).setNumberFormat('yyyy-mm-dd hh:mm:ss');
+          }
+        } catch (archiveFmtErr) {
+          // ignorato di proposito: la formattazione è opzionale
+        }
+      }
+      // IMPORTANTE: "data" (quindi "oldRows") arriva da getValues() sul
+      // foglio sorgente, cioè dai valori GIÀ scritti — non dai parametri
+      // grezzi della richiesta HTTP. Un valore che handleRequest_ aveva
+      // neutralizzato con un apostrofo iniziale (vedi sanitizeForSheet_)
+      // torna da getValues() SENZA quell'apostrofo: è un prefisso
+      // riconosciuto solo al momento della scrittura per forzare il testo,
+      // non un carattere che resta nel valore memorizzato. Copiare quindi
+      // "oldRows" così com'è in un altro foglio con setValues() rimetterebbe
+      // in gioco esattamente lo stesso rischio di formula injection già
+      // risolto altrove in questo file: una cella che iniziava per "=" (o
+      // + - @) tornerebbe una formula eseguita all'apertura del tab di
+      // archivio. sanitizeForSheet_ è un no-op sui valori non stringa (es.
+      // il Date della colonna "timestamp"), quindi è sicuro applicarlo qui
+      // a tutta la riga senza distinguere le colonne.
+      var sanitizedOldRows = oldRows.map(function (r) {
+        return r.map(sanitizeForSheet_);
+      });
+      archiveSheet.getRange(archiveSheet.getLastRow() + 1, 1, sanitizedOldRows.length, headers.length).setValues(sanitizedOldRows);
 
       // Elimina dal basso verso l'alto: altrimenti cancellare una riga
       // sposterebbe gli indici di quelle successive già raccolte in rowsToDelete.
