@@ -167,7 +167,11 @@ Apps Script:
 - che i blocchi ` ``` ` nei `.tpl` siano bilanciati (nessuna fence
   markdown aperta e mai chiusa);
 - che tutte le sezioni `___..._ ___` obbligatorie siano presenti in
-  entrambi i file.
+  entrambi i file;
+- che `___INFO___`, `___TEMPLATE_PARAMETERS___` e
+  `___WEB_PERMISSIONS___`/`___SERVER_PERMISSIONS___` siano JSON valido
+  (GTM li legge come tali; un refuso qui non è un errore di sintassi
+  JavaScript e altrimenti si scoprirebbe solo importando il template in GTM).
 
 Nasce da due bug reali capitati durante lo sviluppo (una fence lasciata
 aperta da una modifica, e la copia incorporata rimasta disallineata senza

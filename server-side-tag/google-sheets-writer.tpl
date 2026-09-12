@@ -116,7 +116,14 @@ const debug = data.enableLogging;
 // ecc.), perdendo il dato che intendevi scrivere. "timestamp" è incluso
 // perché è il nome della colonna generata automaticamente da Apps Script.
 // Si scarta quindi la colonna con un log, invece di perderla in silenzio.
-const reserved = { sheet: 1, token: 1, _order: 1, ping: 1, _dedupe: 1, timestamp: 1 };
+// Array (non oggetto {nome: 1, ...}) apposta: un oggetto letterale eredita le
+// proprietà di Object.prototype (constructor, toString, valueOf,
+// hasOwnProperty, __proto__, ...), quindi "reserved[name]" per name ===
+// 'toString' (o un altro nome ereditato) risulterebbe truthy anche se quel
+// nome non è mai stato messo in "reserved" — una colonna chiamata
+// legittimamente "toString" verrebbe scartata come se fosse riservata.
+// "indexOf" su un array non ha questo problema.
+const reserved = ['sheet', 'token', '_order', 'ping', '_dedupe', 'timestamp'];
 
 const payload = {};
 let order = '';
@@ -127,12 +134,16 @@ let order = '';
 // "order" — che lato Apps Script creerebbe due intestazioni identiche in
 // testa al foglio la prima volta che scrive. Si scarta quindi la
 // ripetizione qui, con un log, invece di perdere il dato in silenzio.
-const seen = {};
+// Array (non oggetto {}), stesso motivo di "reserved" sopra: un nome come
+// "valueOf" o "hasOwnProperty" farebbe risultare "seen[name]" truthy per
+// eredità da Object.prototype già alla prima occorrenza, scartando la
+// colonna come falso duplicato.
+const seen = [];
 
 for (let i = 0; i < rows.length; i++) {
   const name = makeString(rows[i].column1 || '');
   if (!name) continue;
-  if (reserved[name]) {
+  if (reserved.indexOf(name) !== -1) {
     log('Google Sheets Writer - colonna "' + name + '" ignorata: nome riservato (sheet/token/_order/ping/_dedupe/timestamp).');
     continue;
   }
@@ -142,11 +153,11 @@ for (let i = 0; i < rows.length; i++) {
     log('Google Sheets Writer - colonna "' + name + '" ignorata: non può contenere il carattere "|".');
     continue;
   }
-  if (seen[name]) {
+  if (seen.indexOf(name) !== -1) {
     log('Google Sheets Writer - colonna "' + name + '" ignorata: nome già usato in una riga precedente della tabella.');
     continue;
   }
-  seen[name] = true;
+  seen.push(name);
 
   const raw = rows[i].column2;
   // NON usare "raw || ''" al posto di questo controllo: trasformerebbe
@@ -417,6 +428,35 @@ scenarios:
     mock('sendHttpRequest', (url, options, body) => {
       const parsedBody = JSON.parse(body);
       assertThat(parsedBody._dedupe).isEqualTo('evt-123');
+
+      return Promise.create((resolve) => resolve({
+        statusCode: 200,
+        body: JSON.stringify({ ok: true })
+      }));
+    });
+
+    runCode(mockData);
+
+    callLater(() => {
+      assertApi('gtmOnSuccess').wasCalled();
+    });
+- name: Una colonna chiamata "toString" (proprietà ereditata da Object.prototype, non nella lista dei nomi riservati) non viene scartata
+  code: |-
+    const mockData = {
+      webAppUrl: 'https://script.google.com/macros/s/ABC123/exec',
+      sheetName: '',
+      secretToken: '',
+      dedupeKey: '',
+      rowData: [
+        { column1: 'toString', column2: 'some_value' }
+      ],
+      enableLogging: false
+    };
+
+    mock('sendHttpRequest', (url, options, body) => {
+      const parsedBody = JSON.parse(body);
+      assertThat(parsedBody.toString).isEqualTo('some_value');
+      assertThat(parsedBody._order).isEqualTo('toString');
 
       return Promise.create((resolve) => resolve({
         statusCode: 200,

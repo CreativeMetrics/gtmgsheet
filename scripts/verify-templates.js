@@ -17,8 +17,13 @@
  *    markdown aperta, fondendo il codice con il testo successivo.
  *
  * In più, verifica che la sintassi JavaScript di Code.gs e delle sezioni
- * sandboxed dei due template sia valida (node --check), e che le sezioni
- * ___..._ ___ obbligatorie siano tutte presenti.
+ * sandboxed dei due template sia valida (node --check), che le sezioni
+ * ___..._ ___ obbligatorie siano tutte presenti, e che i blocchi JSON che
+ * GTM stesso legge come tali (___INFO___, ___TEMPLATE_PARAMETERS___,
+ * ___WEB_PERMISSIONS___/___SERVER_PERMISSIONS___) siano JSON valido — un
+ * refuso qui (virgola in più, parentesi non chiusa) non è un errore di
+ * sintassi JavaScript e passerebbe inosservato senza questo controllo,
+ * scoprendosi solo importando il template in GTM.
  *
  * Uso: node scripts/verify-templates.js
  * Nessuna dipendenza esterna: solo Node.js standard library.
@@ -107,13 +112,35 @@ function checkJsSyntax(code, label) {
 }
 
 function requireSections(content, label, markers) {
+  const lines = content.split('\n');
   markers.forEach((m) => {
-    if (content.split('\n').some((l) => l.trim() === m)) {
+    if (lines.some((l) => l.trim() === m)) {
       ok(label + ': sezione ' + m + ' presente');
     } else {
       fail(label + ': sezione ' + m + ' MANCANTE');
     }
   });
+}
+
+// GTM legge ___INFO___/___TEMPLATE_PARAMETERS___/___WEB_PERMISSIONS___/
+// ___SERVER_PERMISSIONS___ come JSON: un blocco malformato (virgola in
+// più, parentesi non chiusa, ecc.) qui non è un errore di sintassi
+// JavaScript rilevabile da checkJsSyntax (che controlla solo le sezioni
+// ___SANDBOXED_JS_FOR_..._TEMPLATE___), quindi senza un controllo dedicato
+// passerebbe inosservato in CI e si scoprirebbe solo importando il
+// template in GTM.
+function checkJsonSection(content, label, startMarker, endMarker) {
+  const section = extractSection(content, startMarker, endMarker);
+  if (section === null) {
+    fail(label + ': impossibile estrarre ' + startMarker);
+    return;
+  }
+  try {
+    JSON.parse(section);
+    ok(label + ': ' + startMarker + ' è JSON valido');
+  } catch (err) {
+    fail(label + ': ' + startMarker + ' NON è JSON valido — ' + err.message);
+  }
 }
 
 console.log('== apps-script/Code.gs ==');
@@ -132,6 +159,10 @@ requireSections(clientTpl, 'web-client-tag/google-sheets-logger.tpl', [
   '___TESTS___',
   '___NOTES___'
 ]);
+
+checkJsonSection(clientTpl, 'web-client-tag/google-sheets-logger.tpl', '___INFO___', '___TEMPLATE_PARAMETERS___');
+checkJsonSection(clientTpl, 'web-client-tag/google-sheets-logger.tpl', '___TEMPLATE_PARAMETERS___', '___SANDBOXED_JS_FOR_WEB_TEMPLATE___');
+checkJsonSection(clientTpl, 'web-client-tag/google-sheets-logger.tpl', '___WEB_PERMISSIONS___', '___TESTS___');
 
 const clientTotalFences = countFenceLines(clientTpl);
 if (clientTotalFences % 2 !== 0) {
@@ -199,6 +230,10 @@ requireSections(serverTpl, 'server-side-tag/google-sheets-writer.tpl', [
   '___TESTS___',
   '___NOTES___'
 ]);
+
+checkJsonSection(serverTpl, 'server-side-tag/google-sheets-writer.tpl', '___INFO___', '___TEMPLATE_PARAMETERS___');
+checkJsonSection(serverTpl, 'server-side-tag/google-sheets-writer.tpl', '___TEMPLATE_PARAMETERS___', '___SANDBOXED_JS_FOR_SERVER_TEMPLATE___');
+checkJsonSection(serverTpl, 'server-side-tag/google-sheets-writer.tpl', '___SERVER_PERMISSIONS___', '___TESTS___');
 
 const serverTotalFences = countFenceLines(serverTpl);
 if (serverTotalFences % 2 !== 0) {

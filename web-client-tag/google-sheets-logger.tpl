@@ -120,7 +120,14 @@ const log = data.enableLogging;
 // perdere in silenzio il valore che intendevi scrivere. Si scarta quindi
 // la colonna con un avviso in console, invece di lasciare il
 // comportamento ambiguo.
-const reserved = { sheet: 1, token: 1, _order: 1, ping: 1, _dedupe: 1, timestamp: 1 };
+// Array (non oggetto {nome: 1, ...}) apposta: un oggetto letterale eredita le
+// proprietà di Object.prototype (constructor, toString, valueOf,
+// hasOwnProperty, __proto__, ...), quindi "reserved[name]" per name ===
+// 'toString' (o un altro nome ereditato) risulterebbe truthy anche se quel
+// nome non è mai stato messo in "reserved" — una colonna chiamata
+// legittimamente "toString" verrebbe scartata come se fosse riservata.
+// "indexOf" su un array non ha questo problema.
+const reserved = ['sheet', 'token', '_order', 'ping', '_dedupe', 'timestamp'];
 
 let order = '';
 let qs = '';
@@ -132,12 +139,16 @@ let qs = '';
 // alla lettura di e.parameter lato Apps Script: l'altro andrebbe perso in
 // silenzio. Si scarta quindi la ripetizione qui, con un avviso, invece di
 // lasciare che la seconda occorrenza si perda più a valle in modo opaco.
-const seen = {};
+// Array (non oggetto {}), stesso motivo di "reserved" sopra: un nome come
+// "valueOf" o "hasOwnProperty" farebbe risultare "seen[name]" truthy per
+// eredità da Object.prototype già alla prima occorrenza, scartando la
+// colonna come falso duplicato.
+const seen = [];
 
 for (let i = 0; i < rows.length; i++) {
   const name = makeString(rows[i].column1 || '');
   if (!name) continue;
-  if (reserved[name]) {
+  if (reserved.indexOf(name) !== -1) {
     logToConsole('Google Sheets Logger - colonna "' + name + '" ignorata: nome riservato (sheet/token/_order/ping/_dedupe/timestamp).');
     continue;
   }
@@ -147,11 +158,11 @@ for (let i = 0; i < rows.length; i++) {
     logToConsole('Google Sheets Logger - colonna "' + name + '" ignorata: non può contenere il carattere "|".');
     continue;
   }
-  if (seen[name]) {
+  if (seen.indexOf(name) !== -1) {
     logToConsole('Google Sheets Logger - colonna "' + name + '" ignorata: nome già usato in una riga precedente della tabella.');
     continue;
   }
-  seen[name] = true;
+  seen.push(name);
 
   const raw = rows[i].column2;
   // Importante: NON usare "raw || 'N/A'" perché trasformerebbe anche
@@ -379,6 +390,28 @@ scenarios:
 
     assertApi('gtmOnSuccess').wasCalled();
     assertApi('gtmOnFailure').wasNotCalled();
+- name: Una colonna chiamata "toString" (proprietà ereditata da Object.prototype, non nella lista dei nomi riservati) non viene scartata
+  code: |-
+    const mockData = {
+      webAppUrl: 'https://script.google.com/macros/s/ABC123/exec',
+      sheetName: '',
+      secretToken: '',
+      dedupeKey: '',
+      rowData: [
+        { column1: 'toString', column2: 'some_value' }
+      ],
+      enableLogging: false
+    };
+
+    mock('sendPixel', (url, onSuccess, onFailure) => {
+      assertThat(url.indexOf('_order=toString') !== -1).isEqualTo(true);
+      assertThat(url.indexOf('toString=some_value') !== -1).isEqualTo(true);
+      onSuccess();
+    });
+
+    runCode(mockData);
+
+    assertApi('gtmOnSuccess').wasCalled();
 
 
 ___NOTES___
@@ -599,7 +632,15 @@ function doGet(e) {
 }
 
 function doPost(e) {
-  var params = {};
+  // Object.create(null): niente Object.prototype in catena. Con un {}
+  // normale, un body JSON che contenesse letteralmente la chiave
+  // "__proto__" farebbe scattare, con "params[bk] = body[bk]" qui sotto,
+  // l'accessor speciale __proto__ e cambierebbe il prototipo di "params"
+  // invece di crearci semplicemente una proprietà propria — un effetto
+  // collaterale che non serve a nulla di legittimo e complica solo
+  // l'analisi di sicurezza. Con prototipo nullo quella chiave si comporta
+  // come qualunque altra.
+  var params = Object.create(null);
   for (var k in e.parameter) params[k] = e.parameter[k];
 
   if (e.postData && e.postData.type && e.postData.type.indexOf('json') !== -1) {
@@ -667,7 +708,14 @@ function handleRequest_(p) {
     // e trattarlo come riservato evita un'intestazione duplicata se un
     // tag (mal configurato o precedente a questa protezione) invia una
     // colonna con lo stesso nome.
-    var reserved = { sheet: 1, token: 1, _order: 1, ping: 1, _dedupe: 1, timestamp: 1 };
+    // Array (non oggetto {nome: 1, ...}) apposta: un oggetto letterale eredita
+    // le proprietà di Object.prototype (constructor, toString, valueOf,
+    // hasOwnProperty, __proto__, ...), quindi "reserved[c]" per c === 'toString'
+    // (o uno degli altri nomi ereditati) risulterebbe truthy anche se quel nome
+    // non è mai stato messo in "reserved" — una colonna chiamata legittimamente
+    // "toString" verrebbe scartata come se fosse riservata. "indexOf" su un
+    // array non ha questo problema.
+    var reserved = ['sheet', 'token', '_order', 'ping', '_dedupe', 'timestamp'];
 
     // Ordine dichiarato dal tag (preserva l'ordine impostato nella tabella del tag).
     // Filtrato anche qui su "reserved", non solo per "extras" più sotto: "_order"
@@ -680,16 +728,20 @@ function handleRequest_(p) {
     // colonna duplicata nella tabella del tag, ma un valore come "_order=foo|foo"
     // inviato direttamente all'endpoint (o da una versione precedente del template
     // senza quel controllo) creerebbe altrimenti due intestazioni "foo" identiche.
-    var seenDeclared = {};
+    // Array (non oggetto {}) per lo stesso motivo di "reserved" sopra: un
+    // nome come "valueOf" o "hasOwnProperty" farebbe risultare
+    // "seenDeclared[c]" truthy per eredità da Object.prototype anche alla
+    // prima occorrenza, scartando la colonna come falso duplicato.
+    var seenDeclared = [];
     var declared = String(p._order || '').split('|').filter(function (c) {
-      if (!c || reserved[c] || seenDeclared[c]) return false;
-      seenDeclared[c] = true;
+      if (!c || reserved.indexOf(c) !== -1 || seenDeclared.indexOf(c) !== -1) return false;
+      seenDeclared.push(c);
       return true;
     });
 
     // Eventuali parametri extra non dichiarati, aggiunti in coda
     var extras = Object.keys(p).filter(function (k) {
-      return !reserved[k] && declared.indexOf(k) === -1;
+      return reserved.indexOf(k) === -1 && declared.indexOf(k) === -1;
     });
     var incoming = declared.concat(extras);
 
@@ -752,10 +804,19 @@ function handleRequest_(p) {
     // ecc.) e lo scriverebbe in chiaro nella cella. Il controllo su
     // "reserved" qui blocca questo caso scrivendo una cella vuota, a
     // prescindere da cosa contenga effettivamente l'intestazione.
+    //
+    // "hasOwnProperty.call(p, h)" invece di "p[h] !== undefined": una
+    // colonna già esistente nel foglio (creata da una richiesta precedente)
+    // con un nome coincidente con una proprietà ereditata da
+    // Object.prototype (es. "toString", "valueOf", "hasOwnProperty") e
+    // NON valorizzata dalla richiesta corrente farebbe risultare
+    // "p[h] !== undefined" vero comunque, restituendo la funzione ereditata
+    // invece di una cella vuota. hasOwnProperty distingue "non presente in
+    // questa richiesta" da "ereditato dal prototipo".
     var row = headers.map(function (h) {
       if (h === 'timestamp') return new Date();
-      if (reserved[h]) return '';
-      return sanitizeForSheet_(p[h] !== undefined ? p[h] : '');
+      if (reserved.indexOf(h) !== -1) return '';
+      return sanitizeForSheet_(Object.prototype.hasOwnProperty.call(p, h) ? p[h] : '');
     });
 
     sheet.appendRow(row);
@@ -987,10 +1048,26 @@ function archiveOldRows_() {
       });
       archiveSheet.getRange(archiveSheet.getLastRow() + 1, 1, sanitizedOldRows.length, headers.length).setValues(sanitizedOldRows);
 
-      // Elimina dal basso verso l'alto: altrimenti cancellare una riga
-      // sposterebbe gli indici di quelle successive già raccolte in rowsToDelete.
-      for (var j = rowsToDelete.length - 1; j >= 0; j--) {
-        sheet.deleteRow(rowsToDelete[j]);
+      // Raggruppa le righe da eliminare in intervalli contigui e chiama
+      // deleteRows(inizio, quante) una volta per intervallo, invece di
+      // deleteRow() una volta per riga: le righe più vecchie sono quasi
+      // sempre contigue in cima al foglio (essendo le prime scritte), quindi
+      // nel caso comune questo è un'unica chiamata invece di centinaia o
+      // migliaia — deleteRow() ripetuto è O(n^2) perché ogni chiamata
+      // risistema tutte le righe sottostanti non ancora eliminate.
+      var ranges = [];
+      for (var j = 0; j < rowsToDelete.length; j++) {
+        var r = rowsToDelete[j];
+        if (ranges.length && ranges[ranges.length - 1].end === r - 1) {
+          ranges[ranges.length - 1].end = r;
+        } else {
+          ranges.push({ start: r, end: r });
+        }
+      }
+      // Elimina dal basso verso l'alto: altrimenti cancellare un intervallo
+      // sposterebbe gli indici di quelli successivi già calcolati in "ranges".
+      for (var k = ranges.length - 1; k >= 0; k--) {
+        sheet.deleteRows(ranges[k].start, ranges[k].end - ranges[k].start + 1);
       }
 
       archived += oldRows.length;
