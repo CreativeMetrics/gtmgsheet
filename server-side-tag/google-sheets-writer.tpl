@@ -457,7 +457,7 @@ scenarios:
     callLater(() => {
       assertApi('gtmOnSuccess').wasCalled();
     });
-- name: 'Una colonna chiamata ''toString'' (proprietà ereditata da Object.prototype, non nella lista dei nomi riservati) non viene scartata'
+- name: 'Una colonna chiamata ''toString'' (proprietà ereditata dal prototype di Object, non nella lista dei nomi riservati) non viene scartata'
   code: |-
     const mockData = {
       webAppUrl: 'https://script.google.com/macros/s/ABC123/exec',

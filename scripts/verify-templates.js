@@ -145,15 +145,22 @@ function checkJsonSection(content, label, startMarker, endMarker) {
 
 // GTM legge ___TESTS___ come YAML nel proprio tab "Test", ma il nome di
 // ogni scenario ("- name: ...") passa poi per una validazione propria di
-// GTM (separata dal parsing YAML) che rifiuta qualunque virgoletta
-// doppia letterale nel nome, riportando in importazione l'errore
-// "Test name '...' is invalid. The name contains invalid character: \"\"\""
-// — confermato importando il template in un container reale. Per
-// evitarlo, ogni "- name:" deve (a) essere uno scalare YAML a virgolette
-// singole ben formato — es. 'Costruisce l''URL...' (l'apice si
-// raddoppia, non si escapa con \) — e (b) il testo che ne risulta, una
-// volta tolte le virgolette singole di delimitazione, non deve contenere
-// nessun carattere '"'.
+// GTM (separata dal parsing YAML) che rifiuta certi caratteri letterali
+// nel nome, riportando in importazione un errore del tipo:
+//   Test name '...' is invalid. The name contains invalid character: "X".
+// Confermato due volte importando il template in un container reale, una
+// per carattere: prima con una virgoletta doppia (") in un nome, poi con
+// un punto (.) in un altro (dentro "Object.prototype"). L'elenco qui
+// sotto potrebbe non essere esaustivo — se GTM segnala un altro
+// carattere non ancora in lista, aggiungilo a BANNED_NAME_CHARS.
+//
+// Nota: questo è ortogonale al quoting YAML. Ogni "- name:" deve comunque
+// (a) essere uno scalare YAML a virgolette singole ben formato — es.
+// 'Costruisce l''URL...' (l'apice si raddoppia, non si escapa con \) —
+// e (b) il testo che ne risulta, una volta tolte le virgolette singole
+// di delimitazione, non deve contenere nessuno dei caratteri banditi.
+const BANNED_NAME_CHARS = ['"', '.'];
+
 function checkTestsScenarioNames(content, label) {
   const testsSection = extractSection(content, '___TESTS___', '___NOTES___');
   if (testsSection === null) {
@@ -178,13 +185,15 @@ function checkTestsScenarioNames(content, label) {
     // '' interne all'apice letterale che rappresentano, per ottenere il
     // nome effettivo che GTM vede.
     const decoded = value.slice(1, -1).replace(/''/g, "'");
-    if (decoded.indexOf('"') !== -1) {
-      fail(
-        label + ': lo scenario di test alla riga ' + (idx + 1) + ' di ___TESTS___ contiene una virgoletta doppia letterale (' +
-          JSON.stringify(decoded) + ') — GTM rifiuta questo carattere nel nome dello scenario in fase di importazione, ' +
-          'indipendentemente da come è quotato in YAML.'
-      );
-    }
+    BANNED_NAME_CHARS.forEach((ch) => {
+      if (decoded.indexOf(ch) !== -1) {
+        fail(
+          label + ': lo scenario di test alla riga ' + (idx + 1) + ' di ___TESTS___ contiene il carattere "' + ch + '" (' +
+            JSON.stringify(decoded) + ') — GTM rifiuta questo carattere nel nome dello scenario in fase di importazione, ' +
+            'indipendentemente da come è quotato in YAML.'
+        );
+      }
+    });
   });
   if (count === 0) {
     fail(label + ': nessuno scenario "- name:" trovato in ___TESTS___');

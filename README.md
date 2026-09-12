@@ -175,19 +175,23 @@ Apps Script:
 - che ogni `- name:` di scenario in `___TESTS___` sia uno scalare YAML tra
   apici singoli ben formato (es. `'Costruisce l''URL...'`, con l'apice
   raddoppiato per uno letterale, `''`, non `\'`) e che il nome che ne
-  risulta non contenga nessuna virgoletta doppia (`"`) letterale.
-  Importando un template con una virgoletta doppia in un nome di
-  scenario in un container GTM reale, l'errore è: `Test name '...' is
-  invalid. The name contains invalid character: """.` — è una
+  risulta non contenga nessuno dei caratteri che GTM rifiuta nel nome di
+  uno scenario di test (attualmente `"` e `.` — l'elenco è in
+  `BANNED_NAME_CHARS` in `scripts/verify-templates.js`). Questa è una
   validazione propria del tab Test di GTM sul nome dello scenario,
-  distinta dal parsing YAML (che accetta senza problemi una virgoletta
-  doppia dentro uno scalare tra apici singoli).
+  distinta dal parsing YAML (che accetta senza problemi entrambi i
+  caratteri dentro uno scalare tra apici singoli): importando un
+  template con uno di questi caratteri in un nome, l'errore è `Test name
+  '...' is invalid. The name contains invalid character: "X".` — ne
+  abbiamo incontrati due, uno alla volta, importando in un container
+  reale, per questo l'elenco potrebbe non essere esaustivo.
 
-Nasce da tre bug reali capitati durante lo sviluppo (una fence lasciata
-aperta da una modifica, la copia incorporata rimasta disallineata senza
-che un confronto manuale parziale se ne accorgesse, e i nomi di scenario
-non tra apici che GTM rifiutava in importazione) — invece di scoprirli
-solo rilanciando una revisione a mano, ora ogni push li segnala da solo.
+Nasce da quattro bug reali capitati durante lo sviluppo (una fence
+lasciata aperta da una modifica, la copia incorporata rimasta
+disallineata senza che un confronto manuale parziale se ne accorgesse, e
+due caratteri diversi nei nomi di scenario che GTM rifiutava in
+importazione) — invece di scoprirli solo rilanciando una revisione a
+mano, ora ogni push li segnala da solo.
 Per eseguirlo in locale: `node scripts/verify-templates.js` (nessuna
 dipendenza da installare, solo Node.js).
 
