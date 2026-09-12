@@ -83,7 +83,7 @@ ___TEMPLATE_PARAMETERS___
         "type": "TEXT"
       }
     ],
-    "help": "Ogni riga diventa una colonna nel foglio (creata in automatico se non esiste ancora, gestito dall'Apps Script). Qui puoi mappare direttamente variabili di event data, es. {{Event Name}}, {{Client ID}}. Nomi riservati (non usarli come nome colonna, verrebbero scartati): sheet, token, _order, ping, _dedupe, timestamp. Il nome colonna non può contenere il carattere \"|\"."
+    "help": "Ogni riga diventa una colonna nel foglio (creata in automatico se non esiste ancora, gestito dall'Apps Script). Qui puoi mappare direttamente variabili di event data, es. {{Event Name}}, {{Client ID}}. Nomi riservati (non usarli come nome colonna, verrebbero scartati): sheet, token, _order, ping, _dedupe, timestamp, __proto__. Il nome colonna non può contenere il carattere \"|\"."
   },
   {
     "type": "CHECKBOX",
@@ -123,7 +123,24 @@ const debug = data.enableLogging;
 // nome non è mai stato messo in "reserved" — una colonna chiamata
 // legittimamente "toString" verrebbe scartata come se fosse riservata.
 // "indexOf" su un array non ha questo problema.
-const reserved = ['sheet', 'token', '_order', 'ping', '_dedupe', 'timestamp'];
+// "__proto__" è riservato per un motivo ulteriore, specifico di come è
+// costruito "payload" qui sotto: è un semplice oggetto {}, e assegnare
+// "payload['__proto__'] = valore" con un valore stringa NON crea una
+// proprietà propria — viene silenziosamente ignorato dal setter ereditato
+// da Object.prototype (Annex B), perché __proto__ è un accessor su
+// Object.prototype, non una proprietà dati qualunque. Senza questa
+// esclusione, una colonna chiamata "__proto__" finirebbe comunque in
+// "order" (costruito per concatenazione di stringa, non attraverso questo
+// oggetto, quindi non ne risente) — Apps Script creerebbe l'intestazione
+// corrispondente nel foglio, ma il valore non arriverebbe mai nel body
+// JSON: una colonna sempre vuota, con il dato perso senza alcun avviso.
+// Object.create(null) risolverebbe lo stesso problema, ma non è
+// un'opzione qui: in questo sandbox JS di GTM ogni funzionalità non
+// elementare (persino JSON) va richiesta esplicitamente con require(...),
+// e non esiste un require('Object') in questo file né tra le API
+// sandboxed documentate — un oggetto letterale {} è già ciò che si può
+// usare in questo ambiente.
+const reserved = ['sheet', 'token', '_order', 'ping', '_dedupe', 'timestamp', '__proto__'];
 
 const payload = {};
 let order = '';
@@ -144,7 +161,7 @@ for (let i = 0; i < rows.length; i++) {
   const name = makeString(rows[i].column1 || '');
   if (!name) continue;
   if (reserved.indexOf(name) !== -1) {
-    log('Google Sheets Writer - colonna "' + name + '" ignorata: nome riservato (sheet/token/_order/ping/_dedupe/timestamp).');
+    log('Google Sheets Writer - colonna "' + name + '" ignorata: nome riservato (sheet/token/_order/ping/_dedupe/timestamp/__proto__).');
     continue;
   }
   // "|" è il separatore usato in _order: una colonna che lo contenesse
@@ -457,6 +474,37 @@ scenarios:
       const parsedBody = JSON.parse(body);
       assertThat(parsedBody.toString).isEqualTo('some_value');
       assertThat(parsedBody._order).isEqualTo('toString');
+
+      return Promise.create((resolve) => resolve({
+        statusCode: 200,
+        body: JSON.stringify({ ok: true })
+      }));
+    });
+
+    runCode(mockData);
+
+    callLater(() => {
+      assertApi('gtmOnSuccess').wasCalled();
+    });
+- name: Una colonna chiamata "__proto__" viene scartata come riservata (senza di questo, il valore sparirebbe in silenzio da "payload")
+  code: |-
+    const mockData = {
+      webAppUrl: 'https://script.google.com/macros/s/ABC123/exec',
+      sheetName: '',
+      secretToken: '',
+      dedupeKey: '',
+      rowData: [
+        { column1: '__proto__', column2: 'some_value' },
+        { column1: 'event_name', column2: 'test_event' }
+      ],
+      enableLogging: false
+    };
+
+    mock('sendHttpRequest', (url, options, body) => {
+      const parsedBody = JSON.parse(body);
+      assertThat(parsedBody._order).isEqualTo('event_name');
+      assertThat(parsedBody._order.indexOf('__proto__') !== -1).isEqualTo(false);
+      assertThat(JSON.stringify(parsedBody).indexOf('some_value') !== -1).isEqualTo(false);
 
       return Promise.create((resolve) => resolve({
         statusCode: 200,

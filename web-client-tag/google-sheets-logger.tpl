@@ -83,7 +83,7 @@ ___TEMPLATE_PARAMETERS___
         "type": "TEXT"
       }
     ],
-    "help": "Ogni riga diventa una colonna nel foglio. Se la colonna non esiste ancora viene creata in coda automaticamente. Nomi riservati (non usarli come nome colonna, verrebbero scartati): sheet, token, _order, ping, _dedupe, timestamp. Il nome colonna non può contenere il carattere \"|\"."
+    "help": "Ogni riga diventa una colonna nel foglio. Se la colonna non esiste ancora viene creata in coda automaticamente. Nomi riservati (non usarli come nome colonna, verrebbero scartati): sheet, token, _order, ping, _dedupe, timestamp, __proto__. Il nome colonna non può contenere il carattere \"|\"."
   },
   {
     "type": "CHECKBOX",
@@ -127,7 +127,13 @@ const log = data.enableLogging;
 // nome non è mai stato messo in "reserved" — una colonna chiamata
 // legittimamente "toString" verrebbe scartata come se fosse riservata.
 // "indexOf" su un array non ha questo problema.
-const reserved = ['sheet', 'token', '_order', 'ping', '_dedupe', 'timestamp'];
+// "__proto__" è riservato per un motivo ulteriore, specifico di questo
+// protocollo: anche se qui non finisce in un oggetto JS (i dati viaggiano
+// come coppie nome=valore in query string, costruite per concatenazione di
+// stringa), lato Apps Script una colonna con questo nome creerebbe comunque
+// un'intestazione "__proto__" nel foglio; scartarla qui evita quella
+// colonna spuria fin dall'origine.
+const reserved = ['sheet', 'token', '_order', 'ping', '_dedupe', 'timestamp', '__proto__'];
 
 let order = '';
 let qs = '';
@@ -149,7 +155,7 @@ for (let i = 0; i < rows.length; i++) {
   const name = makeString(rows[i].column1 || '');
   if (!name) continue;
   if (reserved.indexOf(name) !== -1) {
-    logToConsole('Google Sheets Logger - colonna "' + name + '" ignorata: nome riservato (sheet/token/_order/ping/_dedupe/timestamp).');
+    logToConsole('Google Sheets Logger - colonna "' + name + '" ignorata: nome riservato (sheet/token/_order/ping/_dedupe/timestamp/__proto__).');
     continue;
   }
   // "|" è il separatore usato in _order: una colonna che lo contenesse
@@ -412,6 +418,30 @@ scenarios:
     runCode(mockData);
 
     assertApi('gtmOnSuccess').wasCalled();
+- name: Una colonna chiamata "__proto__" viene scartata come riservata
+  code: |-
+    const mockData = {
+      webAppUrl: 'https://script.google.com/macros/s/ABC123/exec',
+      sheetName: '',
+      secretToken: '',
+      dedupeKey: '',
+      rowData: [
+        { column1: '__proto__', column2: 'some_value' },
+        { column1: 'event_name', column2: 'test_event' }
+      ],
+      enableLogging: false
+    };
+
+    mock('sendPixel', (url, onSuccess, onFailure) => {
+      assertThat(url.indexOf('_order=event_name') !== -1).isEqualTo(true);
+      assertThat(url.indexOf('__proto__') !== -1).isEqualTo(false);
+      assertThat(url.indexOf('some_value') !== -1).isEqualTo(false);
+      onSuccess();
+    });
+
+    runCode(mockData);
+
+    assertApi('gtmOnSuccess').wasCalled();
 
 
 ___NOTES___
@@ -472,10 +502,17 @@ senza la gestione di permessi/versioning di un template).
  *   il tab principale.
  * - Health-check: "?token=...&ping=1" risponde senza scrivere righe, utile
  *   per verificare deployment e token da browser durante il setup.
- * - "sheet", "token", "_order", "ping", "_dedupe" sono nomi di colonna
- *   riservati: se la tabella del tag ne usa uno, il template GTM lo scarta
- *   con un log invece di lasciare un comportamento ambiguo o una perdita
- *   silenziosa del dato (vedi i commenti nei template .tpl).
+ * - "sheet", "token", "_order", "ping", "_dedupe", "__proto__" sono nomi di
+ *   colonna riservati: se la tabella del tag ne usa uno, il template GTM lo
+ *   scarta con un log invece di lasciare un comportamento ambiguo o una
+ *   perdita silenziosa del dato (vedi i commenti nei template .tpl).
+ *   "__proto__" in particolare non è un parametro di controllo del
+ *   protocollo come gli altri: è riservato perché, nei template .tpl,
+ *   l'oggetto JS usato per costruire il payload è un semplice {} — e
+ *   assegnare "obj['__proto__'] = valore" con un valore stringa non crea
+ *   una proprietà propria, viene silenziosamente ignorato dal setter
+ *   ereditato da Object.prototype. Senza questa esclusione, una colonna
+ *   chiamata così perderebbe il proprio valore senza alcun avviso.
  * - Deduplicazione opzionale per ID evento (campo "Chiave di
  *   deduplicazione" nel tag, vuoto di default): se la stessa chiave arriva
  *   due volte entro una finestra configurabile (default 5 minuti), la
@@ -715,7 +752,17 @@ function handleRequest_(p) {
     // non è mai stato messo in "reserved" — una colonna chiamata legittimamente
     // "toString" verrebbe scartata come se fosse riservata. "indexOf" su un
     // array non ha questo problema.
-    var reserved = ['sheet', 'token', '_order', 'ping', '_dedupe', 'timestamp'];
+    // "__proto__" è incluso per un motivo diverso dagli altri: qui in
+    // Code.gs "p" è già sicuro da leggere (vedi Object.create(null) in
+    // doPost e hasOwnProperty.call più sotto), ma i template .tpl che
+    // popolano "p" costruiscono il loro payload con un semplice oggetto
+    // {} — dove "obj['__proto__'] = valore" (valore stringa) non crea una
+    // proprietà propria: viene silenziosamente ignorato dal setter
+    // ereditato da Object.prototype. Trattarlo come riservato qui allinea
+    // il comportamento (colonna scartata con un log) invece di lasciare
+    // che, lato .tpl, il dato sparisca senza avviso mentre qui verrebbe
+    // comunque creata una colonna di intestazione "__proto__" sempre vuota.
+    var reserved = ['sheet', 'token', '_order', 'ping', '_dedupe', 'timestamp', '__proto__'];
 
     // Ordine dichiarato dal tag (preserva l'ordine impostato nella tabella del tag).
     // Filtrato anche qui su "reserved", non solo per "extras" più sotto: "_order"

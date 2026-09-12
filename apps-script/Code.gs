@@ -25,10 +25,17 @@
  *   il tab principale.
  * - Health-check: "?token=...&ping=1" risponde senza scrivere righe, utile
  *   per verificare deployment e token da browser durante il setup.
- * - "sheet", "token", "_order", "ping", "_dedupe" sono nomi di colonna
- *   riservati: se la tabella del tag ne usa uno, il template GTM lo scarta
- *   con un log invece di lasciare un comportamento ambiguo o una perdita
- *   silenziosa del dato (vedi i commenti nei template .tpl).
+ * - "sheet", "token", "_order", "ping", "_dedupe", "__proto__" sono nomi di
+ *   colonna riservati: se la tabella del tag ne usa uno, il template GTM lo
+ *   scarta con un log invece di lasciare un comportamento ambiguo o una
+ *   perdita silenziosa del dato (vedi i commenti nei template .tpl).
+ *   "__proto__" in particolare non è un parametro di controllo del
+ *   protocollo come gli altri: è riservato perché, nei template .tpl,
+ *   l'oggetto JS usato per costruire il payload è un semplice {} — e
+ *   assegnare "obj['__proto__'] = valore" con un valore stringa non crea
+ *   una proprietà propria, viene silenziosamente ignorato dal setter
+ *   ereditato da Object.prototype. Senza questa esclusione, una colonna
+ *   chiamata così perderebbe il proprio valore senza alcun avviso.
  * - Deduplicazione opzionale per ID evento (campo "Chiave di
  *   deduplicazione" nel tag, vuoto di default): se la stessa chiave arriva
  *   due volte entro una finestra configurabile (default 5 minuti), la
@@ -268,7 +275,17 @@ function handleRequest_(p) {
     // non è mai stato messo in "reserved" — una colonna chiamata legittimamente
     // "toString" verrebbe scartata come se fosse riservata. "indexOf" su un
     // array non ha questo problema.
-    var reserved = ['sheet', 'token', '_order', 'ping', '_dedupe', 'timestamp'];
+    // "__proto__" è incluso per un motivo diverso dagli altri: qui in
+    // Code.gs "p" è già sicuro da leggere (vedi Object.create(null) in
+    // doPost e hasOwnProperty.call più sotto), ma i template .tpl che
+    // popolano "p" costruiscono il loro payload con un semplice oggetto
+    // {} — dove "obj['__proto__'] = valore" (valore stringa) non crea una
+    // proprietà propria: viene silenziosamente ignorato dal setter
+    // ereditato da Object.prototype. Trattarlo come riservato qui allinea
+    // il comportamento (colonna scartata con un log) invece di lasciare
+    // che, lato .tpl, il dato sparisca senza avviso mentre qui verrebbe
+    // comunque creata una colonna di intestazione "__proto__" sempre vuota.
+    var reserved = ['sheet', 'token', '_order', 'ping', '_dedupe', 'timestamp', '__proto__'];
 
     // Ordine dichiarato dal tag (preserva l'ordine impostato nella tabella del tag).
     // Filtrato anche qui su "reserved", non solo per "extras" più sotto: "_order"

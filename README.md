@@ -183,16 +183,23 @@ dipendenza da installare, solo Node.js).
 ## Nomi di colonna riservati
 
 Nella tabella "Dati da scrivere" di entrambi i tag, non usare `sheet`,
-`token`, `_order`, `ping`, `_dedupe` o `timestamp` come "Nome colonna":
-sono gli stessi nomi usati dal protocollo tra il tag e Apps Script per il
-nome del foglio, il token, l'ordine delle colonne, l'health-check, la
-deduplicazione e la colonna data/ora generata in automatico. Il nome
-colonna non può nemmeno contenere il carattere `|` (separatore interno
-usato per preservare l'ordine). Se una colonna viola una di queste
-regole, viene scartata con un avviso in console invece di scrivere un
-dato ambiguo, farlo sparire in silenzio, o (nel caso di un'intestazione
-preesistente chiamata come uno di questi nomi) esporre il valore di
-controllo reale — vedi la nota di sicurezza qui sotto.
+`token`, `_order`, `ping`, `_dedupe`, `timestamp` o `__proto__` come "Nome
+colonna": i primi sei sono gli stessi nomi usati dal protocollo tra il tag
+e Apps Script per il nome del foglio, il token, l'ordine delle colonne,
+l'health-check, la deduplicazione e la colonna data/ora generata in
+automatico. `__proto__` è riservato per un motivo diverso e specifico dei
+template `.tpl`: il payload lato tag è costruito con un semplice oggetto
+JS `{}`, e assegnargli una proprietà chiamata esattamente `__proto__` non
+crea un campo dati normale — viene silenziosamente ignorato dal setter
+ereditato da `Object.prototype`, quindi quel valore non arriverebbe mai ad
+Apps Script (che nel frattempo creerebbe comunque la colonna
+nell'intestazione, sempre vuota). Il nome colonna non può nemmeno
+contenere il carattere `|` (separatore interno usato per preservare
+l'ordine). Se una colonna viola una di queste regole, viene scartata con
+un avviso in console invece di scrivere un dato ambiguo, farlo sparire in
+silenzio, o (nel caso di un'intestazione preesistente chiamata come uno di
+questi nomi) esporre il valore di controllo reale — vedi la nota di
+sicurezza qui sotto.
 
 **Nota di sicurezza**: la protezione sopra riguarda i nomi che il *tag*
 può inviare. Se però un foglio avesse già, per storia pregressa, una
