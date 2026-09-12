@@ -262,7 +262,16 @@ function handleRequest_(p) {
     // quindi un valore come "_order=token|foo" creerebbe altrimenti una colonna di
     // intestazione chiamata "token" (scritta sempre vuota per via del controllo su
     // "reserved" più sotto, ma comunque una colonna spuria che non dovrebbe esistere).
-    var declared = String(p._order || '').split('|').filter(function (c) { return c && !reserved[c]; });
+    // Deduplicato anche sui nomi ripetuti: entrambi i template .tpl scartano già una
+    // colonna duplicata nella tabella del tag, ma un valore come "_order=foo|foo"
+    // inviato direttamente all'endpoint (o da una versione precedente del template
+    // senza quel controllo) creerebbe altrimenti due intestazioni "foo" identiche.
+    var seenDeclared = {};
+    var declared = String(p._order || '').split('|').filter(function (c) {
+      if (!c || reserved[c] || seenDeclared[c]) return false;
+      seenDeclared[c] = true;
+      return true;
+    });
 
     // Eventuali parametri extra non dichiarati, aggiunti in coda
     var extras = Object.keys(p).filter(function (k) {

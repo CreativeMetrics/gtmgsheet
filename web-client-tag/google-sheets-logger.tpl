@@ -124,6 +124,15 @@ const reserved = { sheet: 1, token: 1, _order: 1, ping: 1, _dedupe: 1, timestamp
 
 let order = '';
 let qs = '';
+// Nomi colonna già inclusi in questo invio: una colonna ripetuta nella
+// tabella (stesso nome, due righe) non deve finire due volte in _order,
+// perché altrimenti Apps Script creerebbe due intestazioni identiche in
+// testa al foglio la prima volta che scrive — e, con due parametri
+// identici in query string, solo uno dei due valori sopravvive comunque
+// alla lettura di e.parameter lato Apps Script: l'altro andrebbe perso in
+// silenzio. Si scarta quindi la ripetizione qui, con un avviso, invece di
+// lasciare che la seconda occorrenza si perda più a valle in modo opaco.
+const seen = {};
 
 for (let i = 0; i < rows.length; i++) {
   const name = makeString(rows[i].column1 || '');
@@ -138,6 +147,11 @@ for (let i = 0; i < rows.length; i++) {
     logToConsole('Google Sheets Logger - colonna "' + name + '" ignorata: non può contenere il carattere "|".');
     continue;
   }
+  if (seen[name]) {
+    logToConsole('Google Sheets Logger - colonna "' + name + '" ignorata: nome già usato in una riga precedente della tabella.');
+    continue;
+  }
+  seen[name] = true;
 
   const raw = rows[i].column2;
   // Importante: NON usare "raw || 'N/A'" perché trasformerebbe anche
@@ -275,6 +289,33 @@ scenarios:
     runCode(mockData);
 
     assertApi('gtmOnSuccess').wasCalled();
+- name: Una colonna ripetuta non finisce duplicata in _order né perde il primo valore in silenzio
+  code: |-
+    const mockData = {
+      webAppUrl: 'https://script.google.com/macros/s/ABC123/exec',
+      sheetName: '',
+      secretToken: '',
+      dedupeKey: '',
+      rowData: [
+        { column1: 'user_id', column2: 'first' },
+        { column1: 'user_id', column2: 'second' }
+      ],
+      enableLogging: false
+    };
+
+    mock('sendPixel', (url, onSuccess, onFailure) => {
+      assertThat(url.indexOf('_order=user_id') !== -1).isEqualTo(true);
+      assertThat(url.indexOf('user_id|user_id') !== -1).isEqualTo(false);
+      const userIdOccurrences = url.split('user_id=').length - 1;
+      assertThat(userIdOccurrences).isEqualTo(1);
+      assertThat(url.indexOf('user_id=first') !== -1).isEqualTo(true);
+      assertThat(url.indexOf('second') !== -1).isEqualTo(false);
+      onSuccess();
+    });
+
+    runCode(mockData);
+
+    assertApi('gtmOnSuccess').wasCalled();
 - name: La chiave di deduplicazione viene aggiunta quando impostata
   code: |-
     const mockData = {
@@ -371,6 +412,62 @@ senza la gestione di permessi/versioning di un template).
    (è lo stesso file presente in `apps-script/Code.gs` nel repository):
 
 ```javascript
+/**
+ * Apps Script da incollare nell'editor COLLEGATO al foglio Google Sheets
+ * (dal foglio: Estensioni > Apps Script — NON un progetto standalone).
+ *
+ * Essendo "container-bound" (legato al foglio), lo script scrive SEMPRE
+ * e SOLO nel foglio a cui è collegato: non serve passare/conoscere lo
+ * Spreadsheet ID dal tag GTM, il che elimina il rischio di scrivere per
+ * errore (o per abuso, visto che l'endpoint /exec è pubblico) in un
+ * foglio diverso da quello previsto.
+ *
+ * Funzionalità:
+ * - Allinea sempre i valori alla riga di intestazione (riga 1), invece
+ *   di fare semplicemente appendRow(valori) nell'ordine di arrivo.
+ * - Aggiunge in automatico le colonne nuove che non esistono ancora.
+ * - LockService per evitare righe perse/sovrascritte con richieste simultanee.
+ * - Un token condiviso, GENERATO AUTOMATICAMENTE (non va inventato né
+ *   scritto a mano nel codice), per limitare l'abuso dell'endpoint pubblico.
+ * - Supporta sia GET (usato dal tag client con sendPixel) sia POST
+ *   (usato dal tag server-side con sendHttpRequest).
+ * - Neutralizza i valori che inizierebbero per = + - @ (rischio di
+ *   formula injection su Sheets, vedi sanitizeForSheet_ più sotto).
+ * - Archiviazione opzionale delle righe più vecchie di N giorni in un tab
+ *   "<Foglio> - Archivio" (menu "Archiviazione righe vecchie"), a mano o
+ *   con un trigger automatico mensile, per non far crescere all'infinito
+ *   il tab principale.
+ * - Health-check: "?token=...&ping=1" risponde senza scrivere righe, utile
+ *   per verificare deployment e token da browser durante il setup.
+ * - "sheet", "token", "_order", "ping", "_dedupe" sono nomi di colonna
+ *   riservati: se la tabella del tag ne usa uno, il template GTM lo scarta
+ *   con un log invece di lasciare un comportamento ambiguo o una perdita
+ *   silenziosa del dato (vedi i commenti nei template .tpl).
+ * - Deduplicazione opzionale per ID evento (campo "Chiave di
+ *   deduplicazione" nel tag, vuoto di default): se la stessa chiave arriva
+ *   due volte entro una finestra configurabile (default 5 minuti), la
+ *   seconda richiesta viene ignorata senza scrivere una riga duplicata.
+ *   Usa CacheService, non crittografia — pensata per i doppioni
+ *   accidentali (retry di rete), non come difesa da un attaccante.
+ *
+ * CONFIGURAZIONE PER I TAG GTM — come vederla:
+ * Apri il foglio Google normalmente: dopo aver salvato questo script
+ * comparirà un menu "Sheets Logger (GTM)" nella barra del foglio con le
+ * voci "Mostra configurazione", "Imposta URL Web App" e "Rigenera token".
+ * "Mostra configurazione" riassume in un solo popup i tre valori da
+ * incollare nei tag GTM (client e/o server): URL del Web App, nome del
+ * foglio (tab) e token condiviso. L'URL va SEMPRE impostato a mano con
+ * "Imposta URL Web App" copiandolo da Deploy > Gestisci deployment: NON
+ * viene mai preso in automatico da ScriptApp.getService().getUrl(), che
+ * su account Google Workspace può restituire un URL nel formato
+ * .../a/TUODOMINIO/macros/s/.../exec — un endpoint diverso, con un
+ * deployment ID diverso da quello del deployment pubblico reale, non
+ * utilizzabile da un chiamante esterno come GTM. Token e URL vivono in
+ * PropertiesService (Proprietà dello script), non nel testo del codice:
+ * non finiscono per errore in un file condiviso, in un export del
+ * container o in questo stesso repository.
+ */
+
 function onOpen() {
   var ui = SpreadsheetApp.getUi();
   ui.createMenu('Sheets Logger (GTM)')
@@ -579,7 +676,16 @@ function handleRequest_(p) {
     // quindi un valore come "_order=token|foo" creerebbe altrimenti una colonna di
     // intestazione chiamata "token" (scritta sempre vuota per via del controllo su
     // "reserved" più sotto, ma comunque una colonna spuria che non dovrebbe esistere).
-    var declared = String(p._order || '').split('|').filter(function (c) { return c && !reserved[c]; });
+    // Deduplicato anche sui nomi ripetuti: entrambi i template .tpl scartano già una
+    // colonna duplicata nella tabella del tag, ma un valore come "_order=foo|foo"
+    // inviato direttamente all'endpoint (o da una versione precedente del template
+    // senza quel controllo) creerebbe altrimenti due intestazioni "foo" identiche.
+    var seenDeclared = {};
+    var declared = String(p._order || '').split('|').filter(function (c) {
+      if (!c || reserved[c] || seenDeclared[c]) return false;
+      seenDeclared[c] = true;
+      return true;
+    });
 
     // Eventuali parametri extra non dichiarati, aggiunti in coda
     var extras = Object.keys(p).filter(function (k) {

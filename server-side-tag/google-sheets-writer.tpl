@@ -120,6 +120,14 @@ const reserved = { sheet: 1, token: 1, _order: 1, ping: 1, _dedupe: 1, timestamp
 
 const payload = {};
 let order = '';
+// Nomi colonna già inclusi in questo invio: una colonna ripetuta nella
+// tabella (stesso nome, due righe) sovrascriverebbe silenziosamente in
+// "payload" il valore già assegnato (payload[name] = ...), perdendo il
+// primo valore, e farebbe comunque comparire il nome due volte in
+// "order" — che lato Apps Script creerebbe due intestazioni identiche in
+// testa al foglio la prima volta che scrive. Si scarta quindi la
+// ripetizione qui, con un log, invece di perdere il dato in silenzio.
+const seen = {};
 
 for (let i = 0; i < rows.length; i++) {
   const name = makeString(rows[i].column1 || '');
@@ -134,6 +142,11 @@ for (let i = 0; i < rows.length; i++) {
     log('Google Sheets Writer - colonna "' + name + '" ignorata: non può contenere il carattere "|".');
     continue;
   }
+  if (seen[name]) {
+    log('Google Sheets Writer - colonna "' + name + '" ignorata: nome già usato in una riga precedente della tabella.');
+    continue;
+  }
+  seen[name] = true;
 
   const raw = rows[i].column2;
   // NON usare "raw || ''" al posto di questo controllo: trasformerebbe
@@ -348,6 +361,36 @@ scenarios:
     mock('sendHttpRequest', (url, options, body) => {
       const parsedBody = JSON.parse(body);
       assertThat(parsedBody.token).isEqualTo('real-secret');
+
+      return Promise.create((resolve) => resolve({
+        statusCode: 200,
+        body: JSON.stringify({ ok: true })
+      }));
+    });
+
+    runCode(mockData);
+
+    callLater(() => {
+      assertApi('gtmOnSuccess').wasCalled();
+    });
+- name: Una colonna ripetuta non finisce duplicata in _order né sovrascrive il primo valore in silenzio
+  code: |-
+    const mockData = {
+      webAppUrl: 'https://script.google.com/macros/s/ABC123/exec',
+      sheetName: '',
+      secretToken: '',
+      dedupeKey: '',
+      rowData: [
+        { column1: 'user_id', column2: 'first' },
+        { column1: 'user_id', column2: 'second' }
+      ],
+      enableLogging: false
+    };
+
+    mock('sendHttpRequest', (url, options, body) => {
+      const parsedBody = JSON.parse(body);
+      assertThat(parsedBody._order).isEqualTo('user_id');
+      assertThat(parsedBody.user_id).isEqualTo('first');
 
       return Promise.create((resolve) => resolve({
         statusCode: 200,
