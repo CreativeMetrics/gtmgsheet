@@ -143,6 +143,44 @@ function checkJsonSection(content, label, startMarker, endMarker) {
   }
 }
 
+// GTM legge ___TESTS___ come YAML nel proprio tab "Test": un nome di
+// scenario "- name: ..." scritto come scalare YAML "plain" (senza
+// apici) che contiene virgolette doppie letterali e/o un punto si è
+// rivelato, importando il template in un container GTM reale, un caso
+// che il parser YAML del tab Test rifiuta in fase di importazione (voce
+// non selezionabile/errore nella lista "Setup"), pur essendo YAML
+// valido per altri parser generici. Per essere sicuri, ogni "- name:"
+// deve essere uno scalare a virgolette singole ben formato — es.
+// 'Una colonna chiamata "token"...' oppure, per un apice letterale,
+// 'Costruisce l''URL...' (l'apice si raddoppia, non si escapa con \).
+function checkTestsScenarioNames(content, label) {
+  const testsSection = extractSection(content, '___TESTS___', '___NOTES___');
+  if (testsSection === null) {
+    fail(label + ': impossibile estrarre ___TESTS___');
+    return;
+  }
+  const lines = testsSection.split('\n');
+  let count = 0;
+  lines.forEach((line, idx) => {
+    const m = line.match(/^- name: (.*)$/);
+    if (!m) return;
+    count++;
+    const value = m[1];
+    if (!/^'(?:[^']|'')*'$/.test(value)) {
+      fail(
+        label + ': lo scenario di test alla riga ' + (idx + 1) + ' di ___TESTS___ non è tra apici singoli in modo corretto (' +
+          JSON.stringify(value) + '). Un nome scenario con virgolette doppie o punti scritto come scalare YAML "plain" ' +
+          '(senza apici) può essere rifiutato dal tab Test di GTM in fase di importazione — vedi il commento sopra a questa funzione.'
+      );
+    }
+  });
+  if (count === 0) {
+    fail(label + ': nessuno scenario "- name:" trovato in ___TESTS___');
+  } else {
+    ok(label + ': tutti i ' + count + ' nomi di scenario in ___TESTS___ sono correttamente tra apici singoli');
+  }
+}
+
 console.log('== apps-script/Code.gs ==');
 const codeGs = readFile(CODE_GS_PATH);
 checkJsSyntax(codeGs, 'apps-script/Code.gs');
@@ -170,6 +208,8 @@ if (clientTotalFences % 2 !== 0) {
 } else {
   ok('web-client-tag/google-sheets-logger.tpl: blocchi ``` bilanciati nell\'intero file (' + clientTotalFences + ')');
 }
+
+checkTestsScenarioNames(clientTpl, 'web-client-tag/google-sheets-logger.tpl');
 
 const clientSandbox = extractSection(clientTpl, '___SANDBOXED_JS_FOR_WEB_TEMPLATE___', '___WEB_PERMISSIONS___');
 if (clientSandbox === null) {
@@ -241,6 +281,8 @@ if (serverTotalFences % 2 !== 0) {
 } else {
   ok('server-side-tag/google-sheets-writer.tpl: blocchi ``` bilanciati nell\'intero file (' + serverTotalFences + ')');
 }
+
+checkTestsScenarioNames(serverTpl, 'server-side-tag/google-sheets-writer.tpl');
 
 const serverSandbox = extractSection(serverTpl, '___SANDBOXED_JS_FOR_SERVER_TEMPLATE___', '___SERVER_PERMISSIONS___');
 if (serverSandbox === null) {

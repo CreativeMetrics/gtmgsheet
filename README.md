@@ -171,11 +171,21 @@ Apps Script:
 - che `___INFO___`, `___TEMPLATE_PARAMETERS___` e
   `___WEB_PERMISSIONS___`/`___SERVER_PERMISSIONS___` siano JSON valido
   (GTM li legge come tali; un refuso qui non è un errore di sintassi
-  JavaScript e altrimenti si scoprirebbe solo importando il template in GTM).
+  JavaScript e altrimenti si scoprirebbe solo importando il template in GTM);
+- che ogni `- name:` di scenario in `___TESTS___` sia uno scalare YAML tra
+  apici singoli ben formato (es. `'Costruisce l''URL...'`). GTM legge
+  anche `___TESTS___` come YAML nel proprio tab Test, e un nome scritto
+  come scalare "plain" (senza apici) contenente virgolette doppie
+  letterali e/o un punto è risultato, importando il template in un
+  container reale, non selezionabile/in errore nella lista Setup del tab
+  Test — pur essendo YAML valido per parser generici. Gli apici singoli
+  (con l'apice raddoppiato per uno letterale, `''`, non `\'`) evitano
+  l'ambiguità.
 
-Nasce da due bug reali capitati durante lo sviluppo (una fence lasciata
-aperta da una modifica, e la copia incorporata rimasta disallineata senza
-che un confronto manuale parziale se ne accorgesse) — invece di scoprirli
+Nasce da tre bug reali capitati durante lo sviluppo (una fence lasciata
+aperta da una modifica, la copia incorporata rimasta disallineata senza
+che un confronto manuale parziale se ne accorgesse, e i nomi di scenario
+non tra apici che GTM rifiutava in importazione) — invece di scoprirli
 solo rilanciando una revisione a mano, ora ogni push li segnala da solo.
 Per eseguirlo in locale: `node scripts/verify-templates.js` (nessuna
 dipendenza da installare, solo Node.js).

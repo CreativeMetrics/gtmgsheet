@@ -292,7 +292,7 @@ ___SERVER_PERMISSIONS___
 ___TESTS___
 
 scenarios:
-- name: Costruisce il body JSON e chiama gtmOnSuccess su risposta ok
+- name: 'Costruisce il body JSON e chiama gtmOnSuccess su risposta ok'
   code: |-
     const mockData = {
       webAppUrl: 'https://script.google.com/macros/s/ABC123/exec',
@@ -327,7 +327,7 @@ scenarios:
       assertApi('gtmOnSuccess').wasCalled();
       assertApi('gtmOnFailure').wasNotCalled();
     });
-- name: Chiama gtmOnFailure se la risposta non è 2xx
+- name: 'Chiama gtmOnFailure se la risposta non è 2xx'
   code: |-
     const mockData = {
       webAppUrl: 'https://script.google.com/macros/s/ABC123/exec',
@@ -351,7 +351,7 @@ scenarios:
       assertApi('gtmOnSuccess').wasNotCalled();
       assertApi('gtmOnFailure').wasCalled();
     });
-- name: Chiama gtmOnFailure se la richiesta HTTP fallisce
+- name: 'Chiama gtmOnFailure se la richiesta HTTP fallisce'
   code: |-
     const mockData = {
       webAppUrl: 'https://script.google.com/macros/s/ABC123/exec',
@@ -372,7 +372,7 @@ scenarios:
       assertApi('gtmOnSuccess').wasNotCalled();
       assertApi('gtmOnFailure').wasCalled();
     });
-- name: Una colonna chiamata "token" non sovrascrive il token reale nel body
+- name: 'Una colonna chiamata "token" non sovrascrive il token reale nel body'
   code: |-
     const mockData = {
       webAppUrl: 'https://script.google.com/macros/s/ABC123/exec',
@@ -401,7 +401,7 @@ scenarios:
     callLater(() => {
       assertApi('gtmOnSuccess').wasCalled();
     });
-- name: Una colonna ripetuta non finisce duplicata in _order né sovrascrive il primo valore in silenzio
+- name: 'Una colonna ripetuta non finisce duplicata in _order né sovrascrive il primo valore in silenzio'
   code: |-
     const mockData = {
       webAppUrl: 'https://script.google.com/macros/s/ABC123/exec',
@@ -431,7 +431,7 @@ scenarios:
     callLater(() => {
       assertApi('gtmOnSuccess').wasCalled();
     });
-- name: La chiave di deduplicazione viene inclusa nel body quando impostata
+- name: 'La chiave di deduplicazione viene inclusa nel body quando impostata'
   code: |-
     const mockData = {
       webAppUrl: 'https://script.google.com/macros/s/ABC123/exec',
@@ -457,7 +457,7 @@ scenarios:
     callLater(() => {
       assertApi('gtmOnSuccess').wasCalled();
     });
-- name: Una colonna chiamata "toString" (proprietà ereditata da Object.prototype, non nella lista dei nomi riservati) non viene scartata
+- name: 'Una colonna chiamata "toString" (proprietà ereditata da Object.prototype, non nella lista dei nomi riservati) non viene scartata'
   code: |-
     const mockData = {
       webAppUrl: 'https://script.google.com/macros/s/ABC123/exec',
@@ -486,7 +486,7 @@ scenarios:
     callLater(() => {
       assertApi('gtmOnSuccess').wasCalled();
     });
-- name: Una colonna chiamata "__proto__" viene scartata come riservata (senza di questo, il valore sparirebbe in silenzio da "payload")
+- name: 'Una colonna chiamata "__proto__" viene scartata come riservata (senza di questo, il valore sparirebbe in silenzio da "payload")'
   code: |-
     const mockData = {
       webAppUrl: 'https://script.google.com/macros/s/ABC123/exec',

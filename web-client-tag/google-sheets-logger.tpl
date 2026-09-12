@@ -253,7 +253,7 @@ ___WEB_PERMISSIONS___
 ___TESTS___
 
 scenarios:
-- name: Costruisce l'URL con dati, sheet e token e invia il pixel
+- name: 'Costruisce l''URL con dati, sheet e token e invia il pixel'
   code: |-
     const mockData = {
       webAppUrl: 'https://script.google.com/macros/s/ABC123/exec',
@@ -282,7 +282,7 @@ scenarios:
 
     assertApi('gtmOnSuccess').wasCalled();
     assertApi('gtmOnFailure').wasNotCalled();
-- name: Una colonna chiamata "token" non finisce duplicata nell'URL
+- name: 'Una colonna chiamata "token" non finisce duplicata nell''URL'
   code: |-
     const mockData = {
       webAppUrl: 'https://script.google.com/macros/s/ABC123/exec',
@@ -306,7 +306,7 @@ scenarios:
     runCode(mockData);
 
     assertApi('gtmOnSuccess').wasCalled();
-- name: Una colonna ripetuta non finisce duplicata in _order né perde il primo valore in silenzio
+- name: 'Una colonna ripetuta non finisce duplicata in _order né perde il primo valore in silenzio'
   code: |-
     const mockData = {
       webAppUrl: 'https://script.google.com/macros/s/ABC123/exec',
@@ -333,7 +333,7 @@ scenarios:
     runCode(mockData);
 
     assertApi('gtmOnSuccess').wasCalled();
-- name: La chiave di deduplicazione viene aggiunta quando impostata
+- name: 'La chiave di deduplicazione viene aggiunta quando impostata'
   code: |-
     const mockData = {
       webAppUrl: 'https://script.google.com/macros/s/ABC123/exec',
@@ -352,7 +352,7 @@ scenarios:
     runCode(mockData);
 
     assertApi('gtmOnSuccess').wasCalled();
-- name: I valori 0 e stringa vuota non diventano N/A
+- name: 'I valori 0 e stringa vuota non diventano N/A'
   code: |-
     const mockData = {
       webAppUrl: 'https://script.google.com/macros/s/ABC123/exec',
@@ -376,7 +376,7 @@ scenarios:
     runCode(mockData);
 
     assertApi('gtmOnSuccess').wasCalled();
-- name: sendPixel usa lo stesso callback per successo e fallimento (fire-and-forget)
+- name: 'sendPixel usa lo stesso callback per successo e fallimento (fire-and-forget)'
   code: |-
     const mockData = {
       webAppUrl: 'https://script.google.com/macros/s/ABC123/exec',
@@ -396,7 +396,7 @@ scenarios:
 
     assertApi('gtmOnSuccess').wasCalled();
     assertApi('gtmOnFailure').wasNotCalled();
-- name: Una colonna chiamata "toString" (proprietà ereditata da Object.prototype, non nella lista dei nomi riservati) non viene scartata
+- name: 'Una colonna chiamata "toString" (proprietà ereditata da Object.prototype, non nella lista dei nomi riservati) non viene scartata'
   code: |-
     const mockData = {
       webAppUrl: 'https://script.google.com/macros/s/ABC123/exec',
@@ -418,7 +418,7 @@ scenarios:
     runCode(mockData);
 
     assertApi('gtmOnSuccess').wasCalled();
-- name: Una colonna chiamata "__proto__" viene scartata come riservata
+- name: 'Una colonna chiamata "__proto__" viene scartata come riservata'
   code: |-
     const mockData = {
       webAppUrl: 'https://script.google.com/macros/s/ABC123/exec',
